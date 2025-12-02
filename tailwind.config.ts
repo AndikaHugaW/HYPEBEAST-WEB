@@ -12,6 +12,10 @@ const config: Config = {
         background: "var(--background)",
         foreground: "var(--foreground)",
       },
+      fontFamily: {
+        nippo: ["var(--font-nippo)", "Arial", "Helvetica", "sans-serif"],
+        sans: ["var(--font-nippo)", "Arial", "Helvetica", "sans-serif"], // Set sebagai default sans
+      },
     },
   },
   plugins: [],
