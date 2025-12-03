@@ -7,6 +7,7 @@ import Image from "next/image";
 import HeroSection from "@/components/HeroSection";
 import Footer from "@/components/Footer";
 import { useAuth } from "@/hooks/useAuth";
+import { createUserClient } from "@/lib/supabase";
 
 type Product = {
   id: string;
@@ -25,6 +26,106 @@ export default function Home() {
   const { user, profile, loading, isAdmin } = useAuth();
   const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
+  const [addingItems, setAddingItems] = useState<Set<string>>(new Set());
+
+  // Handle Add to Cart
+  const handleAddToCart = async (productId: string) => {
+    if (!user) {
+      router.push("/sign-in");
+      return;
+    }
+
+    setAddingItems((prev) => new Set(prev).add(`cart-${productId}`));
+    try {
+      const supabase = createUserClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        router.push("/sign-in");
+        return;
+      }
+
+      const response = await fetch("/api/cart", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          productId: productId,
+          quantity: 1,
+        }),
+      });
+
+      if (response.ok) {
+        // Redirect to cart page
+        router.push("/cart");
+      } else {
+        const errorData = await response.json();
+        alert(errorData.error?.message || "Failed to add to cart");
+      }
+    } catch (error) {
+      console.error("Error adding to cart:", error);
+      alert("Failed to add to cart");
+    } finally {
+      setAddingItems((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(`cart-${productId}`);
+        return newSet;
+      });
+    }
+  };
+
+  // Handle Add to Wishlist
+  const handleAddToWishlist = async (productId: string) => {
+    if (!user) {
+      router.push("/sign-in");
+      return;
+    }
+
+    setAddingItems((prev) => new Set(prev).add(`wishlist-${productId}`));
+    try {
+      const supabase = createUserClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        router.push("/sign-in");
+        return;
+      }
+
+      const response = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          productId: productId,
+        }),
+      });
+
+      if (response.ok) {
+        // Redirect to wishlist page
+        router.push("/wishlist");
+      } else {
+        const errorData = await response.json();
+        if (errorData.error?.code === 'ALREADY_EXISTS') {
+          alert("Item already in wishlist");
+        } else {
+          alert(errorData.error?.message || "Failed to add to wishlist");
+        }
+      }
+    } catch (error) {
+      console.error("Error adding to wishlist:", error);
+      alert("Failed to add to wishlist");
+    } finally {
+      setAddingItems((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(`wishlist-${productId}`);
+        return newSet;
+      });
+    }
+  };
 
   useEffect(() => {
     // STRICT: Admin should NEVER access user pages - redirect immediately
@@ -173,11 +274,12 @@ export default function Home() {
                     {/* Heart Icon - Top Right of Card (outside image) */}
                     <div className="absolute top-3 right-3 z-20">
                       <button 
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.preventDefault();
-                          // Handle wishlist
+                          await handleAddToWishlist(product.id);
                         }}
                         className="bg-white/90 backdrop-blur-sm p-2 rounded-full shadow-sm hover:bg-white text-gray-600 hover:text-red-500 transition-all duration-300 hover:scale-110"
+                        title="Add to wishlist"
                       >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
@@ -213,9 +315,9 @@ export default function Home() {
                       
                       {/* Add to Cart Button - Hidden by default, shown on hover */}
                       <button 
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.preventDefault();
-                          // Handle add to cart
+                          await handleAddToCart(product.id);
                         }}
                         className="mt-3 w-full group/btn relative inline-block text-base font-bold text-white opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300"
                       >

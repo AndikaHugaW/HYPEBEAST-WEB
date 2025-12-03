@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import Footer from "@/components/Footer";
+import { useAuth } from "@/hooks/useAuth";
+import { createUserClient } from "@/lib/supabase";
 
 type Product = {
   id: string;
@@ -38,6 +40,7 @@ export default function ProductDetail() {
   const params = useParams();
   const router = useRouter();
   const productId = params.id as string;
+  const { user } = useAuth();
 
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,12 +49,19 @@ export default function ProductDetail() {
   const [selectedSize, setSelectedSize] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"details" | "reviews" | "discussion">("reviews");
   const [sortReviews, setSortReviews] = useState<string>("newest");
+  const [addingToCart, setAddingToCart] = useState(false);
+  const [addingToWishlist, setAddingToWishlist] = useState(false);
+  
+  // Track last images to detect changes
+  const lastImagesRef = useRef<string[]>([]);
+  const [imageVersion, setImageVersion] = useState<number>(0);
   
   // Helper function to add cache buster to image URLs for real-time updates
+  // Only update cache buster when images actually change
   const addCacheBuster = (url: string) => {
     if (!url) return url;
     const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}t=${Date.now()}`;
+    return `${url}${separator}v=${imageVersion}`;
   };
 
   // Mock reviews data - in production, this would come from API
@@ -100,7 +110,7 @@ export default function ProductDetail() {
   };
 
   useEffect(() => {
-    const fetchProduct = async () => {
+    const fetchProduct = async (isInitialLoad: boolean = false) => {
       try {
         // Add cache buster to force fresh data fetch for real-time updates
         const response = await fetch(`/api/products/${productId}?t=${Date.now()}`);
@@ -129,13 +139,40 @@ export default function ProductDetail() {
           images = images ? [images] : [];
         }
 
-        setProduct({
-          ...data,
-          images: images,
+        // Check if images actually changed to avoid unnecessary re-renders
+        const imagesChanged = JSON.stringify(images) !== JSON.stringify(lastImagesRef.current);
+        if (imagesChanged) {
+          // Only update cache buster version when images actually change
+          setImageVersion(Date.now());
+          lastImagesRef.current = images;
+        }
+
+        // Only update product if data actually changed to prevent glitching
+        setProduct((prevProduct) => {
+          const imagesChanged = JSON.stringify(images) !== JSON.stringify(prevProduct?.images || []);
+          if (imagesChanged || !prevProduct) {
+            return {
+              ...data,
+              images: images,
+            };
+          }
+          return prevProduct;
         });
         
-        // Ensure selectedImageIndex starts at 0 (same as card which uses images[0])
-        setSelectedImageIndex(0);
+        // Only reset selectedImageIndex on initial load, not during polling
+        // This allows user to click thumbnails without them being reset
+        if (isInitialLoad) {
+          setSelectedImageIndex(0);
+        } else {
+          // During polling, ensure selectedImageIndex is still valid
+          // If current selection is out of bounds, reset to 0
+          setSelectedImageIndex((prevIndex) => {
+            if (prevIndex >= images.length) {
+              return 0;
+            }
+            return prevIndex;
+          });
+        }
         
         if (data.color) {
           setSelectedColor(data.color);
@@ -151,24 +188,163 @@ export default function ProductDetail() {
       } catch (err) {
         console.error("Error fetching product:", err);
       } finally {
-        setLoading(false);
+        if (isInitialLoad) {
+          setLoading(false);
+        }
       }
     };
 
     if (productId) {
-      // Initial fetch
-      fetchProduct();
+      // Initial fetch - reset selectedImageIndex to 0
+      fetchProduct(true);
       
-      // Poll for updates every 2 seconds to show new images in real-time
-      // This ensures when admin uploads new images, they appear immediately on detail page
+      // Poll for updates every 3 seconds to show new images in real-time
+      // This ensures when admin uploads new images, they appear quickly on detail page
+      // Reduced frequency to prevent glitching - 3 seconds is still fast enough for real-time feel
+      // But don't reset selectedImageIndex during polling
       const interval = setInterval(() => {
-        fetchProduct();
-      }, 2000);
+        fetchProduct(false);
+      }, 3000);
       
       return () => clearInterval(interval);
     }
   }, [productId]);
 
+  // Process images - must be done before early returns to maintain hook order
+  // Use useMemo to ensure hooks are called in consistent order
+  const displayImages = useMemo(() => {
+    if (!product || !product.images) return [];
+    
+    let images: string[] = [];
+    if (Array.isArray(product.images)) {
+      images = product.images.filter((img: any) => img && img.trim && img.trim() !== "");
+    } else if (typeof product.images === 'string') {
+      try {
+        const parsed = JSON.parse(product.images);
+        images = Array.isArray(parsed) ? parsed.filter((img: any) => img && img.trim && img.trim() !== "") : [];
+      } catch (e) {
+        images = [product.images].filter((img: any) => img && img.trim && img.trim() !== "");
+      }
+    }
+    return images;
+  }, [product?.images]);
+  
+  // Main image: Use selected thumbnail, or default to images[0]
+  // When user clicks a thumbnail, selectedImageIndex will change and main image will update
+  // Use useMemo to prevent unnecessary recalculations
+  const mainImage = useMemo(() => {
+    if (displayImages.length === 0) return "";
+    const index = selectedImageIndex >= 0 && selectedImageIndex < displayImages.length 
+      ? selectedImageIndex 
+      : 0;
+    return displayImages[index] || "";
+  }, [displayImages, selectedImageIndex]);
+  
+  // Memoize the cache-busted URL to prevent constant re-renders
+  const mainImageUrl = useMemo(() => {
+    if (!mainImage) return "";
+    const separator = mainImage.includes('?') ? '&' : '?';
+    return `${mainImage}${separator}v=${imageVersion}`;
+  }, [mainImage, imageVersion]);
+
+  // Handle Add to Cart
+  const handleAddToCart = async () => {
+    if (!user) {
+      router.push("/sign-in");
+      return;
+    }
+
+    if (!product) return;
+
+    setAddingToCart(true);
+    try {
+      const supabase = createUserClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        router.push("/sign-in");
+        return;
+      }
+
+      const response = await fetch("/api/cart", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          productId: product.id,
+          quantity: 1,
+          size: selectedSize || null,
+          color: selectedColor || null,
+        }),
+      });
+
+      if (response.ok) {
+        // Redirect to cart page
+        router.push("/cart");
+      } else {
+        const errorData = await response.json();
+        alert(errorData.error?.message || "Failed to add to cart");
+      }
+    } catch (error) {
+      console.error("Error adding to cart:", error);
+      alert("Failed to add to cart");
+    } finally {
+      setAddingToCart(false);
+    }
+  };
+
+  // Handle Add to Wishlist
+  const handleAddToWishlist = async () => {
+    if (!user) {
+      router.push("/sign-in");
+      return;
+    }
+
+    if (!product) return;
+
+    setAddingToWishlist(true);
+    try {
+      const supabase = createUserClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        router.push("/sign-in");
+        return;
+      }
+
+      const response = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          productId: product.id,
+        }),
+      });
+
+      if (response.ok) {
+        // Redirect to wishlist page
+        router.push("/wishlist");
+      } else {
+        const errorData = await response.json();
+        if (errorData.error?.code === 'ALREADY_EXISTS') {
+          alert("Item already in wishlist");
+        } else {
+          alert(errorData.error?.message || "Failed to add to wishlist");
+        }
+      }
+    } catch (error) {
+      console.error("Error adding to wishlist:", error);
+      alert("Failed to add to wishlist");
+    } finally {
+      setAddingToWishlist(false);
+    }
+  };
+
+  // Early returns after all hooks
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -195,35 +371,6 @@ export default function ProductDetail() {
   
   const availableColors = ["White", "Grey", "Black"]; // Mock colors - should come from product data
   const availableSizes = product.size || ["40.5", "41", "42", "43", "43.5", "44", "44.5", "45", "46"];
-  
-  // Use images array from product, EXACTLY same as card products
-  // Card products transform: image_url = (product.images && product.images.length > 0) ? product.images[0] : product.image_url
-  // So card always uses product.images[0] if available
-  // Ensure images is always an array
-  let displayImages: string[] = [];
-  if (product.images) {
-    if (Array.isArray(product.images)) {
-      displayImages = product.images.filter((img: any) => img && img.trim && img.trim() !== "");
-    } else if (typeof product.images === 'string') {
-      try {
-        const parsed = JSON.parse(product.images);
-        displayImages = Array.isArray(parsed) ? parsed.filter((img: any) => img && img.trim && img.trim() !== "") : [];
-      } catch (e) {
-        displayImages = [product.images].filter((img: any) => img && img.trim && img.trim() !== "");
-      }
-    }
-  }
-  
-  // Main image: Use images[0] as default (same as card), or selected thumbnail
-  // CRITICAL: Card uses product.images[0] as the main image
-  // Detail page MUST use the same images[0] as default to match card
-  // Only change when user clicks a different thumbnail
-  // Add cache buster to ensure real-time updates
-  const mainImage = displayImages.length > 0
-    ? (selectedImageIndex > 0 && selectedImageIndex < displayImages.length 
-        ? addCacheBuster(displayImages[selectedImageIndex])
-        : addCacheBuster(displayImages[0])) // Always default to images[0] - this is what card shows
-    : "";
   
   // Verify: The first image in detail should match the image in card
   // Card shows: product.images[0]
@@ -252,14 +399,15 @@ export default function ProductDetail() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
           {/* Left Section - Product Images */}
           <div>
-            {/* Main Image */}
-            <div className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden mb-4">
-              {mainImage ? (
+            {/* Main Image with Hover Effect */}
+            <div className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden mb-4 group cursor-zoom-in">
+              {mainImageUrl ? (
                 <Image
-                  src={mainImage}
+                  key={`main-${selectedImageIndex}-${mainImage}`}
+                  src={mainImageUrl}
                   alt={product.name}
                   fill
-                  className="object-cover"
+                  className="object-cover transition-transform duration-300 ease-in-out group-hover:scale-110"
                   unoptimized
                   priority
                 />
@@ -268,6 +416,8 @@ export default function ProductDetail() {
                   <div className="text-6xl">👕</div>
                 </div>
               )}
+              {/* Hover overlay indicator */}
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors duration-300 pointer-events-none" />
             </div>
 
             {/* Thumbnail Images - Display up to 4 images from product.images array */}
@@ -276,21 +426,31 @@ export default function ProductDetail() {
                 {displayImages.slice(0, 4).map((image, index) => (
                   <button
                     key={`${image}-${index}`}
-                    onClick={() => setSelectedImageIndex(index)}
-                    className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
+                    onClick={() => {
+                      setSelectedImageIndex(index);
+                    }}
+                    className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all group/thumb ${
                       selectedImageIndex === index
                         ? "border-black ring-2 ring-black ring-offset-2"
-                        : "border-gray-200 hover:border-gray-400"
+                        : "border-gray-200 hover:border-gray-400 hover:ring-2 hover:ring-gray-300 hover:ring-offset-1"
                     }`}
                   >
                     <Image
-                      key={`thumb-${image}-${index}`}
+                      key={`thumb-${index}-${image}`}
                       src={addCacheBuster(image)}
                       alt={`${product.name} view ${index + 1}`}
                       fill
-                      className="object-cover"
+                      className={`object-cover transition-transform duration-200 ${
+                        selectedImageIndex === index 
+                          ? "" 
+                          : "group-hover/thumb:scale-105"
+                      }`}
                       unoptimized
                     />
+                    {/* Active indicator overlay */}
+                    {selectedImageIndex === index && (
+                      <div className="absolute inset-0 bg-black/5 pointer-events-none" />
+                    )}
                   </button>
                 ))}
                 {/* Fill remaining slots if less than 4 images */}
@@ -420,10 +580,19 @@ export default function ProductDetail() {
 
             {/* Add to Cart Button */}
             <div className="flex items-center gap-3 mb-4">
-              <button className="flex-1 bg-black text-white py-3 px-6 rounded-lg font-semibold hover:bg-gray-800 transition-colors">
-                Add to cart
+              <button 
+                onClick={handleAddToCart}
+                disabled={addingToCart}
+                className="flex-1 bg-black text-white py-3 px-6 rounded-lg font-semibold hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {addingToCart ? "Adding..." : "Add to cart"}
               </button>
-              <button className="p-3 border-2 border-gray-300 rounded-lg hover:border-gray-400 transition-colors">
+              <button 
+                onClick={handleAddToWishlist}
+                disabled={addingToWishlist}
+                className="p-3 border-2 border-gray-300 rounded-lg hover:border-gray-400 transition-colors disabled:opacity-50"
+                title="Add to wishlist"
+              >
                 <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
                 </svg>

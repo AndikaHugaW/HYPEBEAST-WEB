@@ -8,7 +8,7 @@ export async function GET() {
     // Fetch all products to extract unique filter values
     const { data: products, error } = await supabase
       .from('products')
-      .select('category, designer, color, brand, is_on_sale, is_new_arrival');
+      .select('category, color, brand, is_on_sale, is_new_arrival');
 
     if (error) {
       throw error;
@@ -17,7 +17,6 @@ export async function GET() {
     if (!products || products.length === 0) {
       return NextResponse.json({
         categories: [],
-        designers: [],
         colors: [],
         brands: [],
         hasOnSale: false,
@@ -27,7 +26,6 @@ export async function GET() {
 
     // Extract unique values
     const categories = [...new Set(products.map(p => p.category).filter(Boolean))].sort();
-    const designers = [...new Set(products.map(p => p.designer).filter(Boolean))].sort();
     const colors = [...new Set(products.map(p => p.color).filter(Boolean))].sort();
     const brands = [...new Set(products.map(p => p.brand).filter(Boolean))].sort();
     const hasOnSale = products.some(p => p.is_on_sale === true);
@@ -35,7 +33,6 @@ export async function GET() {
 
     return NextResponse.json({
       categories,
-      designers,
       colors,
       brands,
       hasOnSale,

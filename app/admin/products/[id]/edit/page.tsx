@@ -18,7 +18,17 @@ export default function EditProduct() {
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
   const [price, setPrice] = useState("");
+  const [category, setCategory] = useState("");
   const [imageUrls, setImageUrls] = useState<string[]>([]);
+
+  // Available categories
+  const categories = [
+    { value: "new-arrival", label: "New Arrival" },
+    { value: "apparel", label: "Apparel" },
+    { value: "footwear", label: "Footwear" },
+    { value: "accessories", label: "Accessories" },
+    { value: "lifestyle", label: "Lifestyle" },
+  ];
 
   // Helper function to add cache busting parameter to image URL
   const addCacheBuster = (url: string) => {
@@ -36,6 +46,7 @@ export default function EditProduct() {
         setName(data.name || "");
         setBrand(data.brand || "");
         setPrice(data.sale_price?.toString() || "");
+        setCategory(data.category || "");
         
         // Ensure images is always an array
         let images = data.images || [];
@@ -103,9 +114,8 @@ export default function EditProduct() {
             return u.split('?')[0].split('&')[0];
           });
         
-        // Save to database asynchronously (don't block UI)
-        // This ensures images are saved immediately so they appear in detail page
-        // But don't show alert here - only show alert in MultipleImageUpload component
+        // Save to database immediately (don't block UI)
+        // This ensures images are saved immediately so they appear in detail page in real-time
         fetch(`/api/products/${productId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -125,10 +135,11 @@ export default function EditProduct() {
             ...prevProduct,
             images: cleanUrls,
           }));
+          console.log("Images saved to database successfully - will appear in detail page within 1 second");
         })
         .catch((err) => {
           console.error("Error saving images to database:", err);
-          // Don't show alert here - MultipleImageUpload already shows success/error
+          alert(`Error: ${err.message || "Failed to save images to database"}`);
         });
         
         // Return new array with new reference - CRITICAL for React to detect change
@@ -201,6 +212,7 @@ export default function EditProduct() {
           name: name.trim(),
           brand: brand.trim(),
           sale_price: parseFloat(price),
+          category: category || null,
           images: cleanImageUrls,
         }),
       });
@@ -256,7 +268,7 @@ export default function EditProduct() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-600 mb-4">Product not found</p>
+          <p className="text-gray-900 mb-4 font-normal">Product not found</p>
           <Link
             href="/admin/products"
             className="text-gray-900 hover:underline"
@@ -275,7 +287,7 @@ export default function EditProduct() {
           <div className="mb-6">
             <Link
               href="/admin/products"
-              className="text-gray-600 hover:text-gray-900 mb-4 inline-block"
+              className="text-gray-900 hover:text-gray-700 mb-4 inline-block font-normal"
             >
               ← Back to Products
             </Link>
@@ -287,7 +299,7 @@ export default function EditProduct() {
             {/* Product Info Section */}
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-normal text-gray-900 mb-2">
                   Product Name *
                 </label>
                 <input
@@ -300,7 +312,7 @@ export default function EditProduct() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-normal text-gray-900 mb-2">
                   Brand *
                 </label>
                 <input
@@ -313,11 +325,11 @@ export default function EditProduct() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-normal text-gray-900 mb-2">
                   Price *
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">$</span>
+                  <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-900 font-normal">$</span>
                   <input
                     type="number"
                     value={price}
@@ -328,6 +340,24 @@ export default function EditProduct() {
                     step="0.01"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-normal text-gray-900 mb-2">
+                  Category
+                </label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-transparent bg-white"
+                >
+                  <option value="">Select a category</option>
+                  {categories.map((cat) => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

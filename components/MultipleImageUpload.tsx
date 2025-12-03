@@ -76,13 +76,24 @@ export default function MultipleImageUpload({
       // Add cache buster to force refresh
       const urlWithCacheBuster = `${result.url}?t=${Date.now()}`;
       
+      // Update localImages state immediately for real-time display
+      setLocalImages((prevImages) => {
+        const newImages = [...prevImages];
+        // Ensure array has enough slots
+        while (newImages.length <= index) {
+          newImages.push("");
+        }
+        newImages[index] = urlWithCacheBuster;
+        return newImages;
+      });
+      
       // Show success alert
       alert(`Gambar berhasil di-upload!`);
       
       // Clear any previous errors
       setError(null);
       
-      // Call callback to update parent state
+      // Call callback to update parent state and save to database
       onUploadComplete(urlWithCacheBuster, result.path, index);
     } catch (err: any) {
       const errorMessage = err.message || "Gagal mengupload gambar";
@@ -97,6 +108,15 @@ export default function MultipleImageUpload({
   };
 
   const handleRemoveImage = async (index: number, imageUrl: string) => {
+    // Update localImages state immediately for real-time display
+    setLocalImages((prevImages) => {
+      const newImages = [...prevImages];
+      if (newImages[index]) {
+        newImages[index] = "";
+      }
+      return newImages;
+    });
+
     // Extract path from URL if it's a Supabase URL
     try {
       const url = new URL(imageUrl);
@@ -141,7 +161,7 @@ export default function MultipleImageUpload({
 
   return (
     <div className="space-y-4">
-      <label className="block text-sm font-medium text-gray-700">{label}</label>
+      <label className="block text-sm font-normal text-gray-900">{label}</label>
       {error && <p className="text-sm text-red-600">{error}</p>}
       
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -196,7 +216,7 @@ export default function MultipleImageUpload({
                     {isUploading ? (
                       <>
                         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 mb-2"></div>
-                        <span className="text-xs text-gray-600">Uploading...</span>
+                        <span className="text-xs text-gray-900 font-normal">Uploading...</span>
                       </>
                     ) : (
                       <>
@@ -213,7 +233,7 @@ export default function MultipleImageUpload({
                             d="M12 4v16m8-8H4"
                           />
                         </svg>
-                        <span className="text-xs text-gray-600 text-center px-2">
+                        <span className="text-xs text-gray-900 font-normal text-center px-2">
                           Image {slotIndex + 1}
                         </span>
                       </>
@@ -225,7 +245,7 @@ export default function MultipleImageUpload({
           );
         })}
       </div>
-      <p className="text-xs text-gray-500">You can upload up to {maxImages} images. The first image will be used as the primary image.</p>
+      <p className="text-xs text-gray-900 font-normal">You can upload up to {maxImages} images. The first image will be used as the primary image.</p>
     </div>
   );
 }

@@ -30,7 +30,9 @@ export default function AdminProducts() {
 
   const fetchProducts = async () => {
     try {
-      const response = await fetch("/api/products?limit=100");
+      // Fetch all products (increase limit to 1000 to ensure all products are shown)
+      // If you have more than 1000 products, consider adding pagination
+      const response = await fetch("/api/products?limit=1000");
       const result = await response.json();
       if (result.data) {
         setProducts(result.data);

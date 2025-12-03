@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import Footer from "@/components/Footer";
+import { useAuth } from "@/hooks/useAuth";
+import { createUserClient } from "@/lib/supabase";
 
 type Product = {
   id: number;
@@ -27,26 +30,126 @@ const categories = [
 ];
 
 export default function Products() {
+  const router = useRouter();
+  const { user } = useAuth();
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>("new-arrival");
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const priceSliderRef = useRef<HTMLInputElement>(null);
+  const [addingItems, setAddingItems] = useState<Set<string>>(new Set());
+
+  // Handle Add to Cart
+  const handleAddToCart = async (productId: string) => {
+    if (!user) {
+      router.push("/sign-in");
+      return;
+    }
+
+    setAddingItems((prev) => new Set(prev).add(`cart-${productId}`));
+    try {
+      const supabase = createUserClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        router.push("/sign-in");
+        return;
+      }
+
+      const response = await fetch("/api/cart", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          productId: productId,
+          quantity: 1,
+        }),
+      });
+
+      if (response.ok) {
+        // Redirect to cart page
+        router.push("/cart");
+      } else {
+        const errorData = await response.json();
+        alert(errorData.error?.message || "Failed to add to cart");
+      }
+    } catch (error) {
+      console.error("Error adding to cart:", error);
+      alert("Failed to add to cart");
+    } finally {
+      setAddingItems((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(`cart-${productId}`);
+        return newSet;
+      });
+    }
+  };
+
+  // Handle Add to Wishlist
+  const handleAddToWishlist = async (productId: string) => {
+    if (!user) {
+      router.push("/sign-in");
+      return;
+    }
+
+    setAddingItems((prev) => new Set(prev).add(`wishlist-${productId}`));
+    try {
+      const supabase = createUserClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        router.push("/sign-in");
+        return;
+      }
+
+      const response = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          productId: productId,
+        }),
+      });
+
+      if (response.ok) {
+        // Redirect to wishlist page
+        router.push("/wishlist");
+      } else {
+        const errorData = await response.json();
+        if (errorData.error?.code === 'ALREADY_EXISTS') {
+          alert("Item already in wishlist");
+        } else {
+          alert(errorData.error?.message || "Failed to add to wishlist");
+        }
+      }
+    } catch (error) {
+      console.error("Error adding to wishlist:", error);
+      alert("Failed to add to wishlist");
+    } finally {
+      setAddingItems((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(`wishlist-${productId}`);
+        return newSet;
+      });
+    }
+  };
 
   // Filter options from API
   const [filterOptions, setFilterOptions] = useState<{
     categories: string[];
-    designers: string[];
-    colors: string[];
     brands: string[];
+    colors: string[];
     hasOnSale: boolean;
     hasNewArrival: boolean;
   }>({
     categories: [],
-    designers: [],
-    colors: [],
     brands: [],
+    colors: [],
     hasOnSale: false,
     hasNewArrival: false,
   });
@@ -55,7 +158,7 @@ export default function Products() {
   const [selectedFilters, setSelectedFilters] = useState<{
     search: string;
     categories: string[];
-    designers: string[];
+    brands: string[];
     colors: string[];
     isOnSale: boolean;
     isNewArrival: boolean;
@@ -64,7 +167,7 @@ export default function Products() {
   }>({
     search: "",
     categories: [],
-    designers: [],
+    brands: [],
     colors: [],
     isOnSale: false,
     isNewArrival: false,
@@ -75,7 +178,7 @@ export default function Products() {
   const filterCategories = [
     { id: "search", label: "CARI DI TOKO" },
     { id: "category", label: "KATEGORI" },
-    { id: "designer", label: "DESAINER" },
+    { id: "brand", label: "BRANDS" },
     { id: "sales", label: "PENJUALAN" },
     { id: "price", label: "KISARAN HARGA" },
     { id: "color", label: "WARNA" },
@@ -128,9 +231,9 @@ export default function Products() {
         });
       }
 
-      if (filters.designers.length > 0) {
-        filters.designers.forEach((designer) => {
-          url += `designer=${encodeURIComponent(designer)}&`;
+      if (filters.brands.length > 0) {
+        filters.brands.forEach((brand) => {
+          url += `brand=${encodeURIComponent(brand)}&`;
         });
       }
 
@@ -207,15 +310,15 @@ export default function Products() {
           categories.push(value as string);
         }
         newFilters.categories = categories;
-      } else if (filterType === "designer") {
-        const designers = [...prev.designers];
-        const index = designers.indexOf(value as string);
+      } else if (filterType === "brand") {
+        const brands = [...prev.brands];
+        const index = brands.indexOf(value as string);
         if (index > -1) {
-          designers.splice(index, 1);
+          brands.splice(index, 1);
         } else {
-          designers.push(value as string);
+          brands.push(value as string);
         }
-        newFilters.designers = designers;
+        newFilters.brands = brands;
       } else if (filterType === "color") {
         const colors = [...prev.colors];
         const index = colors.indexOf(value as string);
@@ -377,22 +480,22 @@ export default function Products() {
                                 )}
                               </div>
                             )}
-                            {category.id === "designer" && (
+                            {category.id === "brand" && (
                               <div className="space-y-2 max-h-60 overflow-y-auto">
-                                {filterOptions.designers.length > 0 ? (
-                                  filterOptions.designers.map((designer) => (
-                                    <label key={designer} className="flex items-center cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                {filterOptions.brands.length > 0 ? (
+                                  filterOptions.brands.map((brand) => (
+                                    <label key={brand} className="flex items-center cursor-pointer hover:bg-gray-50 p-1 rounded">
                                       <input
                                         type="checkbox"
-                                        checked={selectedFilters.designers.includes(designer)}
-                                        onChange={() => handleFilterChange("designer", designer)}
+                                        checked={selectedFilters.brands.includes(brand)}
+                                        onChange={() => handleFilterChange("brand", brand)}
                                         className="mr-2"
                                       />
-                                      <span>{designer}</span>
+                                      <span>{brand}</span>
                                 </label>
                                   ))
                                 ) : (
-                                  <p className="text-xs text-gray-400">No designers available</p>
+                                  <p className="text-xs text-gray-400">No brands available</p>
                                 )}
                               </div>
                             )}
@@ -538,11 +641,13 @@ export default function Products() {
                     {/* Heart Icon - Top Right of Card (outside image) */}
                     <div className="absolute top-3 right-3 z-20">
                       <button 
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.preventDefault();
-                          // Handle wishlist
+                          await handleAddToWishlist(product.id.toString());
                         }}
-                        className="bg-white/90 backdrop-blur-sm p-2 rounded-full shadow-sm hover:bg-white text-gray-600 hover:text-red-500 transition-all duration-300 hover:scale-110"
+                        disabled={addingItems.has(`wishlist-${product.id}`)}
+                        className="bg-white/90 backdrop-blur-sm p-2 rounded-full shadow-sm hover:bg-white text-gray-600 hover:text-red-500 transition-all duration-300 hover:scale-110 disabled:opacity-50"
+                        title="Add to wishlist"
                       >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
@@ -574,18 +679,19 @@ export default function Products() {
                       
                       {/* Add to Cart Button - Hidden by default, shown on hover */}
                       <button 
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.preventDefault();
-                          // Handle add to cart
+                          await handleAddToCart(product.id.toString());
                         }}
-                        className="mt-3 w-full group/btn relative inline-block text-base font-bold text-white opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300"
+                        disabled={addingItems.has(`cart-${product.id}`)}
+                        className="mt-3 w-full group/btn relative inline-block text-base font-bold text-white opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 disabled:opacity-50"
                       >
                         <span className="absolute inset-0 border border-black"></span>
                         <span className="w-full border border-black bg-black py-3 transition-transform group-hover/btn:-translate-x-1 group-hover/btn:-translate-y-1 flex items-center justify-center gap-2">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
                           </svg>
-                          Add to Cart
+                          {addingItems.has(`cart-${product.id}`) ? "Adding..." : "Add to Cart"}
                         </span>
                       </button>
                     </div>
