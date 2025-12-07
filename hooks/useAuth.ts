@@ -49,8 +49,24 @@ export function useAuth() {
     return () => subscription.unsubscribe();
   }, [supabase]); // Re-run when client changes (switching between admin/user)
 
+  // Listen for profile update events
+  useEffect(() => {
+    const handleProfileUpdate = () => {
+      if (user) {
+        // Add cache buster to force fresh fetch
+        fetchProfile(user.id);
+      }
+    };
+
+    window.addEventListener('profile-updated', handleProfileUpdate);
+    return () => {
+      window.removeEventListener('profile-updated', handleProfileUpdate);
+    };
+  }, [user, supabase]);
+
   const fetchProfile = async (userId: string) => {
     try {
+      // Add cache buster to ensure fresh data
       const { data, error } = await supabase
         .from("profiles")
         .select("*")

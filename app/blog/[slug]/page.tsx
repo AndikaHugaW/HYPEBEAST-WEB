@@ -2,10 +2,15 @@ import Image from "next/image";
 import Link from "next/link";
 import Footer from "@/components/Footer";
 
-// Sample blog data - in real app, this would come from a database or API
-const blogPosts: { [key: string]: any } = {
+// Disable caching for this page to ensure fresh data
+export const revalidate = 0;
+export const dynamic = 'force-dynamic';
+import { createServerClient } from "@/lib/supabase";
+
+// Sample blog data - fallback if database is empty
+const fallbackBlogPosts: { [key: string]: any } = {
   "newjeans-returns-to-ador": {
-    id: 1,
+    id: "1",
     category: "Music.",
     headline: "NewJeans Returns to ADOR After Legal Loss",
     subheadline: "The \"Super Shy\" K-pop girl group is coming back",
@@ -19,7 +24,7 @@ const blogPosts: { [key: string]: any } = {
     slug: "newjeans-returns-to-ador"
   },
   "streetwear-trends-dominate-2025": {
-    id: 2,
+    id: "2",
     category: "Fashion.",
     headline: "Streetwear Trends Dominate 2025 Fashion Week",
     subheadline: "Urban fashion takes center stage in major runways",
@@ -33,7 +38,7 @@ const blogPosts: { [key: string]: any } = {
     slug: "streetwear-trends-dominate-2025"
   },
   "ai-revolutionizes-creative-industries": {
-    id: 3,
+    id: "3",
     category: "Tech.",
     headline: "AI Revolutionizes Creative Industries",
     subheadline: "New tools transform how artists and designers work",
@@ -47,7 +52,7 @@ const blogPosts: { [key: string]: any } = {
     slug: "ai-revolutionizes-creative-industries"
   },
   "global-music-festivals-return": {
-    id: 4,
+    id: "4",
     category: "Culture.",
     headline: "Global Music Festivals Return Stronger Than Ever",
     subheadline: "Post-pandemic music scene shows unprecedented growth",
@@ -62,41 +67,100 @@ const blogPosts: { [key: string]: any } = {
   }
 };
 
-export default function BlogDetail({ params }: { params: { slug: string } }) {
-  const post = blogPosts[params.slug] || blogPosts["newjeans-returns-to-ador"];
+export default async function BlogDetail({ params }: { params: { slug: string } }) {
+  let post: any = null;
+  let relatedArticles: any[] = [];
 
-  // Get related articles (excluding current post)
-  const relatedArticles = Object.values(blogPosts)
-    .filter((article: any) => article.id !== post.id)
-    .slice(0, 3)
-    .map((article: any) => ({
-      ...article,
-      slug: article.slug || Object.keys(blogPosts).find(key => blogPosts[key].id === article.id) || `article-${article.id}`
-    }));
+  try {
+    // Try to fetch from database
+    // Force fresh data by using dynamic rendering
+    const supabase = createServerClient();
+    const { data: postData, error: postError } = await supabase
+      .from('blog_posts')
+      .select('*')
+      .eq('slug', params.slug)
+      .single();
+
+    if (!postError && postData) {
+      // Add cache buster to image URL
+      const imageUrl = postData.image_url || postData.image || '';
+      const imageWithCacheBuster = imageUrl ? `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${new Date(postData.updated_at || postData.created_at).getTime()}` : '';
+      
+      post = {
+        ...postData,
+        alt: postData.headline,
+        category: postData.category + ".",
+        image: imageWithCacheBuster || post.image,
+      };
+
+      // Get related articles
+      // Order by updated_at to get most recently updated posts first
+      const { data: relatedData } = await supabase
+        .from('blog_posts')
+        .select('*')
+        .neq('id', post.id)
+        .limit(3)
+        .order('updated_at', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (relatedData) {
+        relatedArticles = relatedData.map((article: any) => {
+          // Add cache buster to image URL
+          const imageUrl = article.image_url || article.image || '';
+          const imageWithCacheBuster = imageUrl ? `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${new Date(article.updated_at || article.created_at).getTime()}` : '';
+          
+          return {
+            ...article,
+            alt: article.headline,
+            category: article.category + ".",
+            image: imageWithCacheBuster,
+          };
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching blog post:", error);
+  }
+
+  // Fallback to hardcoded data if database fetch fails
+  if (!post) {
+    post = fallbackBlogPosts[params.slug] || fallbackBlogPosts["newjeans-returns-to-ador"];
+    relatedArticles = Object.values(fallbackBlogPosts)
+      .filter((article: any) => article.id !== post.id)
+      .slice(0, 3)
+      .map((article: any) => ({
+        ...article,
+        slug: article.slug || Object.keys(fallbackBlogPosts).find(key => fallbackBlogPosts[key].id === article.id) || `article-${article.id}`
+      }));
+  }
 
   return (
     <main className="min-h-screen bg-white">
       {/* Header Section */}
-      <section className="max-w-4xl mx-auto px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-12">
-        <div className="space-y-8">
+      <section className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-8 md:py-12">
+        <div className="w-full max-w-4xl 2xl:max-w-screen-2xl mx-auto space-y-8">
           {/* Category and Title - Centered */}
           <div className="flex flex-col items-center space-y-4">
             <div className="flex items-center gap-4">
-              <span className="inline-block bg-green-100 text-black px-4 py-1.5 rounded-lg text-sm font-medium">
+              <span className="inline-block bg-red-500/20 text-red-500 px-4 py-1.5 rounded-full text-sm font-medium border border-red-500/30">
                 {post.category}
               </span>
               <span className="text-sm text-gray-600">
                 {post.date}
               </span>
             </div>
-            <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold text-black leading-tight text-center">
+            <h1 className="text-3xl md:text-4xl lg:text-5xl font-normal text-black leading-tight text-center">
               {post.headline}
             </h1>
+            {/* Subheadline - Right below headline */}
+            <p className="text-lg font-light text-gray-600 leading-relaxed max-w-3xl text-center">
+              {post.subheadline}
+            </p>
           </div>
 
           {/* Main Image - Centered */}
           <div className="flex justify-center">
-            <div className="relative w-full max-w-4xl aspect-[4/3] rounded-lg overflow-hidden">
+            <div className="relative w-full max-w-4xl 2xl:max-w-screen-2xl aspect-[4/3] rounded-lg overflow-hidden">
               <Image
                 src={post.image}
                 alt={post.alt}
@@ -106,20 +170,13 @@ export default function BlogDetail({ params }: { params: { slug: string } }) {
               />
             </div>
           </div>
-
-          {/* Description - Centered container with text-align start */}
-          <div className="flex justify-center">
-            <p className="text-lg text-gray-600 leading-relaxed max-w-3xl text-left">
-              {post.subheadline}
-            </p>
-          </div>
         </div>
       </section>
 
       {/* Article Content Section */}
-      <section className="max-w-4xl mx-auto px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-12">
-        <div className="flex justify-center">
-          <div className="text-gray-700 leading-relaxed text-base md:text-lg max-w-3xl text-left">
+      <section className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-8 md:py-12">
+        <div className="w-full max-w-4xl 2xl:max-w-screen-2xl mx-auto">
+          <div className="text-gray-700 leading-relaxed text-base md:text-lg max-w-3xl 2xl:max-w-screen-2xl mx-auto text-left">
           {params.slug === "newjeans-returns-to-ador" ? (
             <>
               <p className="mb-6">
@@ -210,9 +267,10 @@ export default function BlogDetail({ params }: { params: { slug: string } }) {
       </section>
 
       {/* Related Articles Section */}
-      <section className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-12">
-        <h2 className="text-2xl md:text-3xl font-bold text-black mb-8">Related Articles</h2>
-        <div className="grid md:grid-cols-3 gap-8">
+      <section className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-8 md:py-12">
+        <div className="w-full max-w-4xl 2xl:max-w-screen-2xl mx-auto">
+          <h2 className="text-2xl md:text-3xl font-bold text-black mb-8">Related Articles</h2>
+          <div className="grid md:grid-cols-3 gap-8">
           {relatedArticles.map((article: any) => (
             <Link
               key={article.id}
@@ -232,7 +290,9 @@ export default function BlogDetail({ params }: { params: { slug: string } }) {
                 </div>
                 {/* Content */}
                 <div className="space-y-2">
-                  <p className="text-blue-600 text-sm font-medium">{article.category}</p>
+                  <span className="inline-block bg-red-500/20 text-red-500 px-3 py-1 rounded-full text-sm font-medium border border-red-500/30">
+                    {article.category}
+                  </span>
                   <h3 className="text-lg font-bold text-black group-hover:text-gray-600 transition-colors line-clamp-2">
                     {article.headline}
                   </h3>
@@ -242,19 +302,22 @@ export default function BlogDetail({ params }: { params: { slug: string } }) {
             </Link>
           ))}
         </div>
+        </div>
       </section>
 
       {/* Back to Blog Link */}
-      <section className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-8">
-        <Link 
-          href="/aboutus"
-          className="inline-flex items-center gap-2 text-gray-600 hover:text-black transition-colors"
-        >
+      <section className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-8 md:py-12">
+        <div className="w-full max-w-4xl 2xl:max-w-screen-2xl mx-auto">
+          <Link 
+            href="/aboutus"
+            className="inline-flex items-center gap-2 text-gray-600 hover:text-black transition-colors"
+          >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
           </svg>
           Back to Blog
         </Link>
+        </div>
       </section>
 
       {/* Footer Section */}

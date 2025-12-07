@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import Footer from "@/components/Footer";
@@ -31,13 +31,14 @@ const categories = [
 
 export default function Products() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [activeGender, setActiveGender] = useState<string>("men");
   const [activeCategory, setActiveCategory] = useState<string>("new-arrival");
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const priceSliderRef = useRef<HTMLInputElement>(null);
   const [addingItems, setAddingItems] = useState<Set<string>>(new Set());
 
   // Handle Add to Cart
@@ -203,8 +204,11 @@ export default function Products() {
   };
 
   // Fetch products based on active category and filters
-  const fetchProducts = async (categoryId: string, filters = selectedFilters) => {
+  const fetchProducts = async (categoryId: string, filters = selectedFilters, isPolling = false, gender?: string) => {
+    // Only show loading state on initial load, not during polling to avoid glitch
+    if (!isPolling) {
     setLoading(true);
+    }
     setError(null);
     
     try {
@@ -212,6 +216,12 @@ export default function Products() {
       if (!category) return;
 
       let url = "/api/products?";
+      
+      // Gender filter - use provided gender parameter or fallback to activeGender state
+      const currentGender = gender !== undefined ? gender : activeGender;
+      if (currentGender) {
+        url += `gender=${currentGender}&`;
+      }
       
       // Category filter
       if (category.isNewArrival) {
@@ -225,7 +235,8 @@ export default function Products() {
         url += `search=${encodeURIComponent(filters.search)}&`;
       }
       
-      if (filters.categories.length > 0) {
+      // Don't apply category filter if "new-arrival" is selected (it uses is_new_arrival instead)
+      if (filters.categories.length > 0 && !category.isNewArrival) {
         filters.categories.forEach((cat) => {
           url += `category=${cat}&`;
         });
@@ -261,7 +272,28 @@ export default function Products() {
       
       url += "limit=20&sort=newest";
 
-      const response = await fetch(url);
+      // Add cache buster to ensure fresh data
+      url += `&_t=${Date.now()}`;
+
+      const response = await fetch(url, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error?.message || errorMessage;
+        } catch (e) {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
       const result = await response.json();
 
       if (result.error) {
@@ -269,7 +301,15 @@ export default function Products() {
       }
 
       // Transform API data to match component structure
-      const transformedProducts = (result.data || []).map((product: any) => ({
+      const transformedProducts = (result.data || []).map((product: any) => {
+        // Add cache buster to image URL for real-time updates
+        const imageUrl = (product.images && product.images.length > 0) 
+          ? product.images[0] 
+          : product.image_url || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&q=80";
+        
+        const imageWithCacheBuster = imageUrl ? `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${new Date(product.updated_at || product.created_at || Date.now()).getTime()}` : imageUrl;
+        
+        return {
         id: product.id,
         name: product.name,
         brand: product.brand,
@@ -277,14 +317,48 @@ export default function Products() {
         original_price: product.original_price,
         sale_price: product.sale_price,
         discount_percentage: product.discount_percentage,
-        image_url: (product.images && product.images.length > 0) 
-          ? product.images[0] 
-          : product.image_url || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&q=80",
+          image_url: imageWithCacheBuster,
         is_new_arrival: product.is_new_arrival,
         is_on_sale: product.is_on_sale,
-      }));
+        };
+      });
 
-      setProducts(transformedProducts);
+      // Only update state if data actually changed to prevent unnecessary re-renders and glitch
+      if (isPolling) {
+        // Compare products by creating a string representation to detect changes
+        const normalizeProduct = (p: any) => ({
+          id: String(p.id),
+          name: p.name,
+          image_url: p.image_url ? p.image_url.split('?')[0] : '', // Remove cache buster for comparison
+          sale_price: p.sale_price,
+          is_new_arrival: p.is_new_arrival,
+          is_on_sale: p.is_on_sale,
+        });
+        
+        const currentProductsStr = JSON.stringify(
+          products.map(normalizeProduct).sort((a, b) => a.id.localeCompare(b.id))
+        );
+        
+        const newProductsStr = JSON.stringify(
+          transformedProducts.map(normalizeProduct).sort((a, b) => a.id.localeCompare(b.id))
+        );
+        
+        // Only update if there are actual changes
+        // Also verify that the gender used in fetch matches current activeGender to prevent glitch
+        if (currentProductsStr !== newProductsStr) {
+          const expectedGender = gender !== undefined ? gender : activeGender;
+          // Only update if gender matches (prevents showing wrong gender data when switching)
+          if (expectedGender === activeGender) {
+            setProducts(transformedProducts);
+          }
+        }
+      } else {
+        // Always update on initial load - verify gender matches
+        const expectedGender = gender !== undefined ? gender : activeGender;
+        if (expectedGender === activeGender) {
+          setProducts(transformedProducts);
+        }
+      }
     } catch (err: any) {
       console.error("Error fetching products:", err);
       setError(err.message || "Failed to load products");
@@ -342,29 +416,121 @@ export default function Products() {
     });
   };
 
+  // Read URL query parameters and update state
+  useEffect(() => {
+    const genderParam = searchParams.get('gender');
+    const categoryParam = searchParams.get('category');
+    const isNewArrivalParam = searchParams.get('is_new_arrival');
+
+    // Update activeGender if gender parameter exists
+    if (genderParam && (genderParam === 'men' || genderParam === 'woman')) {
+      setActiveGender(genderParam);
+    }
+
+    // Update activeCategory based on URL parameters
+    if (isNewArrivalParam === 'true') {
+      setActiveCategory('new-arrival');
+    } else if (categoryParam) {
+      // Map category parameter to category ID
+      const categoryId = categories.find(cat => cat.value === categoryParam)?.id;
+      if (categoryId) {
+        setActiveCategory(categoryId);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   useEffect(() => {
     fetchFilterOptions();
   }, []);
 
+  // Polling for filter options (every 3 seconds) to get new brands in realtime
   useEffect(() => {
-    fetchProducts(activeCategory, selectedFilters);
-  }, [activeCategory, selectedFilters]);
+    const filterInterval = setInterval(() => {
+      fetchFilterOptions();
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(filterInterval);
+  }, []);
+
+  // Initial fetch - reset when gender or category changes
+  useEffect(() => {
+    fetchProducts(activeCategory, selectedFilters, false, activeGender);
+  }, [activeCategory, activeGender, selectedFilters]);
+
+  // Polling for real-time updates (every 5 seconds)
+  // Use ref to always get latest activeGender value in polling
+  const activeGenderRef = useRef(activeGender);
+  useEffect(() => {
+    activeGenderRef.current = activeGender;
+  }, [activeGender]);
 
   useEffect(() => {
-    if (priceSliderRef.current) {
-      const slider = priceSliderRef.current;
-      const value = slider.value;
-      const percentage = (parseInt(value) / 5000) * 100;
-      slider.style.background = `linear-gradient(to right, #000 0%, #000 ${percentage}%, #e5e7eb ${percentage}%, #e5e7eb 100%)`;
-    }
-  }, []);
+    const interval = setInterval(() => {
+      // Only poll if no active filters (to avoid interrupting user actions)
+      const hasActiveFilters = selectedFilters.search || 
+        selectedFilters.categories.length > 0 || 
+        selectedFilters.brands.length > 0 || 
+        selectedFilters.colors.length > 0 || 
+        selectedFilters.isOnSale || 
+        selectedFilters.isNewArrival || 
+        selectedFilters.minPrice > 0 || 
+        selectedFilters.maxPrice < 5000;
+      
+      if (!hasActiveFilters) {
+        // Pass isPolling=true and current gender from ref to prevent loading state and glitch
+        fetchProducts(activeCategory, selectedFilters, true, activeGenderRef.current);
+      }
+    }, 5000); // Poll every 5 seconds
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCategory, selectedFilters]);
+
 
   return (
     <main className="min-h-screen bg-white">
-       {/* Navigation Header */}
-       <section className="border-b border-gray-200 h-[100px] flex items-center">
+       {/* Navigation Header - Main Menu (Men/Woman) */}
+       <section className="border-b border-gray-200">
          <div className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24">
-           <nav className="flex items-center justify-center gap-8">
+           {/* Main Gender Menu */}
+           <nav className="flex items-center justify-center gap-8 h-16 border-b border-gray-200">
+             <button
+               onClick={() => {
+                 setActiveGender("men");
+                 setActiveCategory("new-arrival");
+               }}
+               className={`text-sm transition-colors relative ${
+                 activeGender === "men"
+                   ? "font-bold text-gray-900"
+                   : "font-light text-gray-600 hover:text-gray-900"
+               }`}
+             >
+               Men
+               {activeGender === "men" && (
+                 <span className="absolute left-0 -bottom-4 h-0.5 bg-black w-full"></span>
+               )}
+             </button>
+             <button
+               onClick={() => {
+                 setActiveGender("woman");
+                 setActiveCategory("new-arrival");
+               }}
+               className={`text-sm transition-colors relative ${
+                 activeGender === "woman"
+                   ? "font-bold text-gray-900"
+                   : "font-light text-gray-600 hover:text-gray-900"
+               }`}
+             >
+               Woman
+               {activeGender === "woman" && (
+                 <span className="absolute left-0 -bottom-4 h-0.5 bg-black w-full"></span>
+               )}
+             </button>
+           </nav>
+           
+           {/* Submenu Categories */}
+           <nav className="flex items-center justify-center gap-8 h-14">
              {categories.map((category) => (
                <button
                  key={category.id}
@@ -392,8 +558,8 @@ export default function Products() {
           }}></div>
         </div>
         <div className="relative z-10 w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-16 md:py-24 text-center">
-          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold">
-            {categories.find((cat) => cat.id === activeCategory)?.label || "Products"}
+          <h1 className="text-5xl md:text-6xl lg:text-7xl font-normal">
+            {activeGender === "men" ? "Men" : "Woman"} - {categories.find((cat) => cat.id === activeCategory)?.label || "Products"}
           </h1>
         </div>
       </section>
@@ -407,9 +573,9 @@ export default function Products() {
               <div className="space-y-6">
                 <div>
                   <p className="text-sm text-gray-600 mb-2">
-                    Product / {categories.find((cat) => cat.id === activeCategory)?.label || "Products"}
+                    {activeGender === "men" ? "Men" : "Woman"} / {categories.find((cat) => cat.id === activeCategory)?.label || "Products"}
                   </p>
-                  <h2 className="text-3xl font-bold text-gray-900">
+                  <h2 className="text-3xl font-normal text-gray-900">
                     {categories.find((cat) => cat.id === activeCategory)?.label || "Products"}
                   </h2>
                 </div>
@@ -422,7 +588,7 @@ export default function Products() {
                         onClick={() => toggleDropdown(category.id)}
                         className="w-full flex items-center justify-between py-3 text-left group"
                       >
-                        <span className="text-sm font-bold text-gray-900 uppercase tracking-wide">
+                        <span className="text-sm font-normal text-gray-900 uppercase tracking-wide">
                           {category.label}
                         </span>
                         <svg
@@ -530,20 +696,22 @@ export default function Products() {
                             )}
                             {category.id === "price" && (
                               <div className="space-y-2">
+                                <div className="flex items-center gap-3">
                                 <input
-                                  ref={priceSliderRef}
                                   type="range"
                                   min="0"
                                   max="5000"
                                   value={selectedFilters.maxPrice}
-                                  className="w-full slider-black"
+                                    className="h-3.5 w-full appearance-none rounded-full bg-gray-300 [&::-webkit-slider-thumb]:size-7 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-[6px] [&::-webkit-slider-thumb]:border-gray-500 [&::-webkit-slider-thumb]:bg-gray-200 [&::-moz-range-thumb]:size-7 [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-[6px] [&::-moz-range-thumb]:border-gray-500 [&::-moz-range-thumb]:bg-gray-200"
                                   onChange={(e) => {
                                     const value = parseInt(e.target.value);
                                     handleFilterChange("maxPrice", value);
-                                    const percentage = (value / 5000) * 100;
-                                    e.target.style.background = `linear-gradient(to right, #000 0%, #000 ${percentage}%, #e5e7eb ${percentage}%, #e5e7eb 100%)`;
                                   }}
                                 />
+                                  <span className="text-sm/none font-medium text-gray-700">
+                                    ${selectedFilters.maxPrice.toLocaleString()}
+                                  </span>
+                                </div>
                                 <div className="flex justify-between text-xs text-gray-500">
                                   <span>${selectedFilters.minPrice.toLocaleString()}</span>
                                   <span>${selectedFilters.maxPrice.toLocaleString()}</span>
@@ -628,8 +796,17 @@ export default function Products() {
                         unoptimized
                       />
                       
-                      {/* New Badge - Top Right of Image */}
-                          {product.is_new_arrival && (
+                      {/* Discount Badge - Top Left of Image */}
+                          {discount > 0 && (
+                      <div className="absolute top-3 left-3 z-10">
+                        <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded">
+                          -{discount}%
+                        </span>
+                      </div>
+                          )}
+                      
+                      {/* New Badge - Top Right of Image (only if no discount) */}
+                          {product.is_new_arrival && !discount && (
                       <div className="absolute top-3 right-3 z-10">
                         <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded">
                           New
@@ -664,16 +841,13 @@ export default function Products() {
                         {product.name}
                       </h3>
                       <div className="flex items-center gap-2">
+                        {product.original_price > product.sale_price && (
                         <span className="text-sm text-gray-400 line-through">
-                              ${product.original_price.toLocaleString()}
-                        </span>
-                            {discount > 0 && (
-                        <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">
-                                -{discount}%
+                              ${product.original_price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                             )}
                         <span className="text-base font-bold text-gray-900 ml-auto">
-                              ${product.sale_price.toLocaleString()}
+                              ${product.sale_price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                       

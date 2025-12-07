@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { adminStorage, userStorage } from './storage';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -15,36 +15,78 @@ const finalKey = supabaseAnonKey || 'placeholder-key';
 
 export const supabase = createClient(finalUrl, finalKey);
 
+// Singleton instances for client-side usage to avoid multiple GoTrueClient instances
+let userClientInstance: SupabaseClient | null = null;
+let adminClientInstance: SupabaseClient | null = null;
+
 // Admin Supabase client - uses adminStorage (localStorage_admin)
-export const createAdminClient = () => {
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn('⚠️ Missing Supabase environment variables. Please create .env.local file.');
+// Returns singleton instance to avoid multiple GoTrueClient instances
+export const createAdminClient = (): SupabaseClient => {
+  if (typeof window === 'undefined') {
+    // Server-side: create new instance
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.warn('⚠️ Missing Supabase environment variables. Please create .env.local file.');
+    }
+    return createClient(finalUrl, finalKey, {
+      auth: {
+        storage: adminStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+      },
+    });
   }
-  return createClient(finalUrl, finalKey, {
-    auth: {
-      storage: adminStorage,
-      autoRefreshToken: true,
-      persistSession: true,
-    },
-  });
+
+  // Client-side: return singleton instance
+  if (!adminClientInstance) {
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.warn('⚠️ Missing Supabase environment variables. Please create .env.local file.');
+    }
+    adminClientInstance = createClient(finalUrl, finalKey, {
+      auth: {
+        storage: adminStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+      },
+    });
+  }
+  return adminClientInstance;
 };
 
 // User Supabase client - uses userStorage (localStorage_user)
-export const createUserClient = () => {
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn('⚠️ Missing Supabase environment variables. Please create .env.local file.');
+// Returns singleton instance to avoid multiple GoTrueClient instances
+export const createUserClient = (): SupabaseClient => {
+  if (typeof window === 'undefined') {
+    // Server-side: create new instance
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.warn('⚠️ Missing Supabase environment variables. Please create .env.local file.');
+    }
+    return createClient(finalUrl, finalKey, {
+      auth: {
+        storage: userStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+      },
+    });
   }
-  return createClient(finalUrl, finalKey, {
-    auth: {
-      storage: userStorage,
-      autoRefreshToken: true,
-      persistSession: true,
-    },
-  });
+
+  // Client-side: return singleton instance
+  if (!userClientInstance) {
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.warn('⚠️ Missing Supabase environment variables. Please create .env.local file.');
+    }
+    userClientInstance = createClient(finalUrl, finalKey, {
+      auth: {
+        storage: userStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+      },
+    });
+  }
+  return userClientInstance;
 };
 
 // Client-side Supabase client (for use in components) - defaults to user client
-export const createClientComponentClient = () => {
+export const createClientComponentClient = (): SupabaseClient => {
   return createUserClient();
 };
 

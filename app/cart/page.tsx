@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import Footer from "@/components/Footer";
+import DiscountModal from "@/components/DiscountModal";
 import { useAuth } from "@/hooks/useAuth";
 import { createUserClient } from "@/lib/supabase";
 
@@ -29,6 +30,21 @@ export default function Cart() {
   const [isFetching, setIsFetching] = useState(false);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [isClient, setIsClient] = useState(false);
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const [selectedDiscount, setSelectedDiscount] = useState<{
+    id: string;
+    code: string;
+    name: string;
+    type: "percentage" | "fixed";
+    value: number;
+    minPurchase?: number;
+    maxDiscount?: number;
+    startDate: string;
+    endDate: string;
+    usageLimit?: number;
+    usedCount: number;
+    status: "active" | "inactive" | "expired";
+  } | null>(null);
 
   // Format price consistently to avoid hydration mismatch
   // Use simple format without locale-specific formatting
@@ -204,14 +220,38 @@ export default function Cart() {
     0
   );
   const shipping = subtotal > 0 ? 10 : 0;
-  const total = subtotal + shipping;
+  
+  // Calculate discount
+  const calculateDiscountAmount = () => {
+    if (!selectedDiscount) return 0;
+    
+    // Check minimum purchase requirement
+    if (selectedDiscount.minPurchase && subtotal < selectedDiscount.minPurchase) {
+      return 0;
+    }
+    
+    let discountAmount = 0;
+    if (selectedDiscount.type === "percentage") {
+      discountAmount = (subtotal * selectedDiscount.value) / 100;
+      if (selectedDiscount.maxDiscount && discountAmount > selectedDiscount.maxDiscount) {
+        discountAmount = selectedDiscount.maxDiscount;
+      }
+    } else {
+      discountAmount = selectedDiscount.value;
+    }
+    
+    return discountAmount;
+  };
+  
+  const discountAmount = calculateDiscountAmount();
+  const total = subtotal + shipping - discountAmount;
 
   return (
     <main className="min-h-screen bg-white">
       {/* Header */}
       <div className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24 py-8 border-b border-gray-200">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Shopping Cart</h1>
+          <h1 className="text-3xl font-normal text-gray-900 mb-2">Shopping Cart</h1>
           <p className="text-sm text-gray-600 font-normal">
             {cartItems.length} item{cartItems.length !== 1 ? "s" : ""} in your cart
           </p>
@@ -372,6 +412,43 @@ export default function Cart() {
                       <span>Shipping</span>
                       <span>{shipping > 0 ? `$${formatPrice(shipping)}` : "Free"}</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowDiscountModal(true)}
+                      className="w-full text-left border border-gray-300 text-gray-900 py-2 px-4 rounded-lg font-normal hover:bg-gray-50 transition-colors text-sm"
+                    >
+                      {selectedDiscount ? selectedDiscount.code : "Add Discount"}
+                    </button>
+                    {selectedDiscount && discountAmount > 0 && (
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-gray-600">Discount ({selectedDiscount.code})</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-green-600 font-medium">
+                            -${formatPrice(discountAmount)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedDiscount(null);
+                              // Update localStorage when discount is removed
+                              try {
+                                localStorage.setItem('checkout_cart_items', JSON.stringify(cartItems));
+                                localStorage.setItem('checkout_timestamp', Date.now().toString());
+                                localStorage.removeItem('checkout_discount');
+                              } catch (error) {
+                                console.error('Error updating localStorage:', error);
+                              }
+                            }}
+                            className="text-gray-400 hover:text-red-600 transition-colors"
+                            title="Remove discount"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div className="border-t border-gray-200 pt-3">
                       <div className="flex justify-between text-base font-bold text-gray-900">
                         <span>Total</span>
@@ -381,13 +458,29 @@ export default function Cart() {
                   </div>
                   <Link
                     href="/checkout"
-                    className="block w-full text-center bg-black text-white py-3 px-6 rounded-lg font-medium hover:bg-gray-800 transition-colors mb-4"
+                    onClick={() => {
+                      // Update localStorage with latest data (non-blocking)
+                      try {
+                        localStorage.setItem('checkout_cart_items', JSON.stringify(cartItems));
+                        localStorage.setItem('checkout_timestamp', Date.now().toString());
+                        if (selectedDiscount) {
+                          localStorage.setItem('checkout_discount', JSON.stringify(selectedDiscount));
+                        } else {
+                          localStorage.removeItem('checkout_discount');
+                        }
+                      } catch (error) {
+                        console.error('Error saving cart to localStorage:', error);
+                      }
+                    }}
+                    prefetch={true}
+                    className="w-full text-center bg-black text-white py-3 px-6 rounded-lg font-medium hover:bg-gray-800 transition-colors mb-4 cursor-pointer inline-block"
                   >
                     Proceed to Checkout
                   </Link>
                   <Link
                     href="/products"
-                    className="block w-full text-center border border-gray-300 text-gray-900 py-3 px-6 rounded-lg font-normal hover:bg-gray-50 transition-colors"
+                    prefetch={true}
+                    className="w-full text-center border border-gray-300 text-gray-900 py-3 px-6 rounded-lg font-normal hover:bg-gray-50 transition-colors cursor-pointer inline-block"
                   >
                     Continue Shopping
                   </Link>
@@ -398,6 +491,24 @@ export default function Cart() {
         </div>
       </div>
 
+      <DiscountModal
+        isOpen={showDiscountModal}
+        onClose={() => setShowDiscountModal(false)}
+        onSelectDiscount={(discount) => {
+          setSelectedDiscount(discount);
+          setShowDiscountModal(false);
+          // Save to localStorage immediately for faster checkout
+          try {
+            localStorage.setItem('checkout_cart_items', JSON.stringify(cartItems));
+            localStorage.setItem('checkout_timestamp', Date.now().toString());
+            localStorage.setItem('checkout_discount', JSON.stringify(discount));
+          } catch (error) {
+            console.error('Error saving to localStorage:', error);
+          }
+        }}
+        selectedDiscount={selectedDiscount}
+        subtotal={subtotal}
+      />
       <Footer />
     </main>
   );

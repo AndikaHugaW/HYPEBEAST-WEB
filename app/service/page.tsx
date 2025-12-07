@@ -1,22 +1,95 @@
 "use client";
 
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import Footer from "@/components/Footer";
 
 export default function Service() {
+  const [scrollY, setScrollY] = useState(0);
+  const sectionsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const imagesRef = useRef<(HTMLDivElement | null)[]>([]);
+  const contentRef = useRef<(HTMLDivElement | null)[]>([]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrollY(window.scrollY);
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const observerOptions = {
+      threshold: 0.1,
+      rootMargin: "0px 0px -100px 0px",
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("animate-fade-in");
+        }
+      });
+    }, observerOptions);
+
+    sectionsRef.current.forEach((section) => {
+      if (section) observer.observe(section);
+    });
+
+    return () => {
+      sectionsRef.current.forEach((section) => {
+        if (section) observer.unobserve(section);
+      });
+    };
+  }, []);
+
+  // Parallax effect for images
+  useEffect(() => {
+    const handleParallax = () => {
+      imagesRef.current.forEach((imageContainer) => {
+        if (imageContainer) {
+          const rect = imageContainer.getBoundingClientRect();
+          const windowHeight = window.innerHeight;
+          const isInViewport = rect.top < windowHeight && rect.bottom > 0;
+          
+          if (isInViewport) {
+            // Calculate parallax offset based on scroll position
+            const parallaxSpeed = 0.2;
+            const elementCenter = rect.top + rect.height / 2;
+            const windowCenter = windowHeight / 2;
+            const distanceFromCenter = elementCenter - windowCenter;
+            const offset = distanceFromCenter * parallaxSpeed;
+            
+            const image = imageContainer.querySelector("img");
+            if (image) {
+              image.style.transform = `translateY(${offset}px)`;
+            }
+          }
+        }
+      });
+    };
+
+    handleParallax();
+    window.addEventListener("scroll", handleParallax, { passive: true });
+    return () => window.removeEventListener("scroll", handleParallax);
+  }, []);
   return (
     <main className="bg-white">
       {/* Main Hero Section - Two Column Layout */}
-      <section className="flex items-center pt-12 pb-20 md:pt-16 md:pb-32">
+      <section 
+        ref={(el) => (sectionsRef.current[0] = el)}
+        className="flex items-center pt-12 pb-20 md:pt-16 md:pb-32 opacity-0 transition-opacity duration-1000"
+      >
         <div className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 xl:gap-20 items-center">
             {/* Left Column - Promotional Content */}
             <div className="space-y-8">
-              {/* Exclusive Collection Badge */}
+              {/* Service Badge */}
               <div className="inline-block">
                 <span className="inline-flex items-center px-4 py-1.5 rounded-full border border-gray-300 text-xs font-medium text-gray-700 bg-white">
-                  Exclusive Collection
+                  service
                 </span>
               </div>
 
@@ -62,35 +135,23 @@ export default function Service() {
               {/* Trust Indicators */}
               <div className="flex flex-wrap items-center gap-6 pt-4">
                 <div className="flex items-center gap-2">
-                  <svg
-                    className="w-5 h-5 text-green-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
+                  <Image
+                    src="/images/service/verified.svg"
+                    alt="Verified"
+                    width={20}
+                    height={20}
+                    className="w-5 h-5"
+                  />
                   <span className="text-sm font-medium text-gray-700">Verified</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <svg
-                    className="w-5 h-5 text-yellow-500"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M13 10V3L4 14h7v7l9-11h-7z"
-                    />
-                  </svg>
+                  <Image
+                    src="/images/service/fast.svg"
+                    alt="Fast Shipping"
+                    width={20}
+                    height={20}
+                    className="w-5 h-5"
+                  />
                   <span className="text-sm font-medium text-gray-700">Fast Shipping</span>
                 </div>
               </div>
@@ -98,33 +159,36 @@ export default function Service() {
 
             {/* Right Column - Product Display */}
             <div className="w-full flex justify-center lg:justify-end">
-              <div className="relative w-[850px] h-[1030px] flex-shrink-0">
+              <div className="relative w-[700px] h-[850px] flex-shrink-0">
                 {/* Black Border Frame */}
                 <div className="absolute top-0 left-0 w-full h-full border border-black" />
                 
                 {/* Product Image */}
-                <div className="absolute top-[20px] left-[20px] w-[calc(100%_-_40px)] h-[990px] overflow-hidden">
+                <div 
+                  ref={(el) => (imagesRef.current[0] = el)}
+                  className="absolute top-[18px] left-[18px] w-[calc(100%_-_36px)] h-[814px] overflow-hidden"
+                >
                   <Image
-                    src="https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=800&q=80"
+                    src="/images/service/hero-1.jpeg"
                     alt="Luxury Street Fashion Product"
                     fill
-                    className="object-cover"
-                    sizes="(max-width: 850px) 100vw, 810px"
+                    className="object-cover transition-transform duration-300 ease-out"
+                    sizes="(max-width: 700px) 100vw, 664px"
                     unoptimized
                   />
                 </div>
 
                 {/* Live Stock Badge - Top Right */}
-                <div className="absolute top-[44px] right-[44px] z-10">
-                  <div className="rounded-[30px] bg-pink-200 flex items-center justify-center py-[7px] px-[20px]">
-                    <span className="text-base font-bold text-white uppercase tracking-wider">Live Stock</span>
-                  </div>
+                <div className="absolute top-[38px] right-[38px] z-10">
+                  <span className="inline-block bg-red-500/20 text-red-500 px-3 py-1.5 rounded-full text-xs font-medium border border-red-500/30">
+                    Live Stock
+                  </span>
                 </div>
 
                 {/* THE DROP Title - Bottom Left */}
-                <div className="absolute bottom-[85px] left-[48px] z-10">
-                  <h2 className="text-8xl font-light text-white leading-tight mb-4">THE DROP</h2>
-                  <p className="text-3xl font-light text-white">Latest Arrivals / Footwear / Apparel</p>
+                <div className="absolute bottom-[70px] left-[42px] z-10">
+                  <h2 className="text-7xl font-light text-black leading-tight mb-3">THE DROP</h2>
+                  <p className="text-2xl font-light text-black">Latest Arrivals / Footwear / Apparel</p>
                 </div>
               </div>
             </div>
@@ -133,23 +197,29 @@ export default function Service() {
       </section>
 
       {/* Authentication Lab Section - Two Column Layout */}
-      <section className="py-20 md:py-32 bg-white">
+      <section 
+        ref={(el) => (sectionsRef.current[1] = el)}
+        className="py-20 md:py-32 bg-white opacity-0 transition-opacity duration-1000"
+      >
         <div className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 xl:gap-20 items-center">
             {/* Left Column - Image with Border */}
             <div className="w-full flex justify-center lg:justify-start">
-              <div className="relative w-[850px] h-[1030px] flex-shrink-0">
+              <div className="relative w-[700px] h-[850px] flex-shrink-0">
                 {/* Black Border Frame */}
                 <div className="absolute top-0 left-0 w-full h-full border border-black" />
                 
                 {/* Product Image */}
-                <div className="absolute top-[20px] left-[20px] w-[calc(100%_-_40px)] h-[990px] overflow-hidden">
+                <div 
+                  ref={(el) => (imagesRef.current[1] = el)}
+                  className="absolute top-[18px] left-[18px] w-[calc(100%_-_36px)] h-[814px] overflow-hidden"
+                >
                   <Image
-                    src="https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&q=80"
+                    src="/images/service/hero-2.jpeg"
                     alt="Authentication Lab Product"
                     fill
-                    className="object-cover"
-                    sizes="(max-width: 850px) 100vw, 810px"
+                    className="object-cover transition-transform duration-300 ease-out"
+                    sizes="(max-width: 700px) 100vw, 664px"
                     unoptimized
                   />
                 </div>
@@ -158,10 +228,10 @@ export default function Service() {
 
             {/* Right Column - Content */}
             <div className="space-y-8">
-              {/* Exclusive Collection Badge */}
+              {/* Service Badge */}
               <div className="inline-block">
                 <span className="inline-flex items-center px-4 py-1.5 rounded-full border border-black text-xs font-medium text-black bg-white">
-                  Exclusive Collection
+                  service
                 </span>
               </div>
 
@@ -221,15 +291,18 @@ export default function Service() {
       </section>
 
       {/* Real-Time Tracking Section - Two Column Layout */}
-      <section className="py-20 md:py-32 bg-white">
+      <section 
+        ref={(el) => (sectionsRef.current[2] = el)}
+        className="py-20 md:py-32 bg-white opacity-0 transition-opacity duration-1000"
+      >
         <div className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 xl:gap-20 items-center">
             {/* Left Column - Content */}
             <div className="space-y-8">
-              {/* Exclusive Collection Badge */}
+              {/* Service Badge */}
               <div className="inline-block">
                 <span className="inline-flex items-center px-4 py-1.5 rounded-full border border-black text-xs font-medium text-black bg-white">
-                  Exclusive Collection
+                  service
                 </span>
               </div>
 
@@ -283,18 +356,21 @@ export default function Service() {
 
             {/* Right Column - Image with Border */}
             <div className="w-full flex justify-center lg:justify-end">
-              <div className="relative w-[850px] h-[1030px] flex-shrink-0">
+              <div className="relative w-[700px] h-[850px] flex-shrink-0">
                 {/* Black Border Frame */}
                 <div className="absolute top-0 left-0 w-full h-full border border-black" />
                 
                 {/* Product Image */}
-                <div className="absolute top-[20px] left-[20px] w-[calc(100%_-_40px)] h-[990px] overflow-hidden">
+                <div 
+                  ref={(el) => (imagesRef.current[2] = el)}
+                  className="absolute top-[18px] left-[18px] w-[calc(100%_-_36px)] h-[814px] overflow-hidden"
+                >
                   <Image
-                    src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&q=80"
+                    src="/images/service/hero-3.jpeg"
                     alt="Real-Time Tracking Technology"
                     fill
-                    className="object-cover"
-                    sizes="(max-width: 850px) 100vw, 810px"
+                    className="object-cover transition-transform duration-300 ease-out"
+                    sizes="(max-width: 700px) 100vw, 664px"
                     unoptimized
                   />
                 </div>
@@ -305,23 +381,29 @@ export default function Service() {
       </section>
 
       {/* 24/7 Concierge Section - Two Column Layout */}
-      <section className="py-20 md:py-32 bg-white">
+      <section 
+        ref={(el) => (sectionsRef.current[3] = el)}
+        className="py-20 md:py-32 bg-white opacity-0 transition-opacity duration-1000"
+      >
         <div className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 xl:gap-20 items-center">
             {/* Left Column - Image with Border */}
             <div className="w-full flex justify-center lg:justify-start">
-              <div className="relative w-[850px] h-[1030px] flex-shrink-0">
+              <div className="relative w-[700px] h-[850px] flex-shrink-0">
                 {/* Black Border Frame */}
                 <div className="absolute top-0 left-0 w-full h-full border border-black" />
                 
                 {/* Product Image */}
-                <div className="absolute top-[20px] left-[20px] w-[calc(100%_-_40px)] h-[990px] overflow-hidden">
+                <div 
+                  ref={(el) => (imagesRef.current[3] = el)}
+                  className="absolute top-[18px] left-[18px] w-[calc(100%_-_36px)] h-[814px] overflow-hidden"
+                >
                   <Image
-                    src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=800&q=80"
+                    src="/images/service/hero-4.png"
                     alt="24/7 Concierge Support"
                     fill
-                    className="object-cover"
-                    sizes="(max-width: 850px) 100vw, 810px"
+                    className="object-cover transition-transform duration-300 ease-out"
+                    sizes="(max-width: 700px) 100vw, 664px"
                     unoptimized
                   />
                 </div>
@@ -330,10 +412,10 @@ export default function Service() {
 
             {/* Right Column - Content */}
             <div className="space-y-8">
-              {/* Exclusive Collection Badge */}
+              {/* Service Badge */}
               <div className="inline-block">
                 <span className="inline-flex items-center px-4 py-1.5 rounded-full border border-black text-xs font-medium text-black bg-white">
-                  Exclusive Collection
+                  service
                 </span>
               </div>
 
@@ -389,15 +471,18 @@ export default function Service() {
       </section>
 
       {/* Global Sourcing Section - Two Column Layout */}
-      <section className="py-20 md:py-32 bg-white">
+      <section 
+        ref={(el) => (sectionsRef.current[4] = el)}
+        className="py-20 md:py-32 bg-white opacity-0 transition-opacity duration-1000"
+      >
         <div className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 xl:gap-20 items-center">
             {/* Left Column - Content */}
             <div className="space-y-8">
-              {/* Exclusive Collection Badge */}
+              {/* Service Badge */}
               <div className="inline-block">
                 <span className="inline-flex items-center px-4 py-1.5 rounded-full border border-black text-xs font-medium text-black bg-white">
-                  Exclusive Collection
+                  service
                 </span>
               </div>
 
@@ -453,18 +538,21 @@ export default function Service() {
 
             {/* Right Column - Image with Border */}
             <div className="w-full flex justify-center lg:justify-end">
-              <div className="relative w-[850px] h-[1030px] flex-shrink-0">
+              <div className="relative w-[700px] h-[850px] flex-shrink-0">
                 {/* Black Border Frame */}
                 <div className="absolute top-0 left-0 w-full h-full border border-black" />
                 
                 {/* Product Image */}
-                <div className="absolute top-[20px] left-[20px] w-[calc(100%_-_40px)] h-[990px] overflow-hidden">
+                <div 
+                  ref={(el) => (imagesRef.current[4] = el)}
+                  className="absolute top-[18px] left-[18px] w-[calc(100%_-_36px)] h-[814px] overflow-hidden"
+                >
                   <Image
-                    src="https://images.unsplash.com/photo-1483721310020-03333e577078?w=800&q=80"
+                    src="https://plus.unsplash.com/premium_photo-1712254285267-8dfd7510c9de?q=80&w=1470&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
                     alt="Global Sourcing Network"
                     fill
-                    className="object-cover"
-                    sizes="(max-width: 850px) 100vw, 810px"
+                    className="object-cover transition-transform duration-300 ease-out"
+                    sizes="(max-width: 700px) 100vw, 664px"
                     unoptimized
                   />
                 </div>
@@ -475,23 +563,29 @@ export default function Service() {
       </section>
 
       {/* Secure Vault Section - Two Column Layout */}
-      <section className="py-20 md:py-32 bg-white">
+      <section 
+        ref={(el) => (sectionsRef.current[5] = el)}
+        className="py-20 md:py-32 bg-white opacity-0 transition-opacity duration-1000"
+      >
         <div className="w-full px-6 sm:px-8 lg:px-12 xl:px-16 2xl:px-24">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 xl:gap-20 items-center">
             {/* Left Column - Image with Border */}
             <div className="w-full flex justify-center lg:justify-start">
-              <div className="relative w-[850px] h-[1030px] flex-shrink-0">
+              <div className="relative w-[700px] h-[850px] flex-shrink-0">
                 {/* Black Border Frame */}
                 <div className="absolute top-0 left-0 w-full h-full border border-black" />
                 
                 {/* Product Image */}
-                <div className="absolute top-[20px] left-[20px] w-[calc(100%_-_40px)] h-[990px] overflow-hidden">
+                <div 
+                  ref={(el) => (imagesRef.current[5] = el)}
+                  className="absolute top-[18px] left-[18px] w-[calc(100%_-_36px)] h-[814px] overflow-hidden"
+                >
                   <Image
-                    src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=800&q=80"
+                    src="/images/service/hero-6.png"
                     alt="Secure Vault Protection"
                     fill
-                    className="object-cover"
-                    sizes="(max-width: 850px) 100vw, 810px"
+                    className="object-cover transition-transform duration-300 ease-out"
+                    sizes="(max-width: 700px) 100vw, 664px"
                     unoptimized
                   />
                 </div>
@@ -500,10 +594,10 @@ export default function Service() {
 
             {/* Right Column - Content */}
             <div className="space-y-8">
-              {/* Exclusive Collection Badge */}
+              {/* Service Badge */}
               <div className="inline-block">
                 <span className="inline-flex items-center px-4 py-1.5 rounded-full border border-black text-xs font-medium text-black bg-white">
-                  Exclusive Collection
+                  service
                 </span>
               </div>
 

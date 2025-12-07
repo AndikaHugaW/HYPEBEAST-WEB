@@ -46,6 +46,22 @@ export default function Checkout() {
     expiryDate: "",
     cvv: "",
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedDiscount, setSelectedDiscount] = useState<{
+    id: string;
+    code: string;
+    name: string;
+    type: "percentage" | "fixed";
+    value: number;
+    minPurchase?: number;
+    maxDiscount?: number;
+    startDate: string;
+    endDate: string;
+    usageLimit?: number;
+    usedCount: number;
+    status: "active" | "inactive" | "expired";
+  } | null>(null);
 
   // Format price consistently
   const formatPrice = (price: number): string => {
@@ -55,11 +71,54 @@ export default function Checkout() {
     return parts.join('.');
   };
 
-  // Fetch cart items
-  const fetchCartItems = useCallback(async () => {
+  const [hasInitialCache, setHasInitialCache] = useState(false);
+
+  // Load cart items and discount from localStorage first for instant display
+  useEffect(() => {
+    try {
+      const cachedCartItems = localStorage.getItem('checkout_cart_items');
+      const cachedTimestamp = localStorage.getItem('checkout_timestamp');
+      const cachedDiscount = localStorage.getItem('checkout_discount');
+      
+      if (cachedCartItems && cachedTimestamp) {
+        const timestamp = parseInt(cachedTimestamp, 10);
+        const now = Date.now();
+        // Use cached data if less than 5 minutes old
+        if (now - timestamp < 5 * 60 * 1000) {
+          const items = JSON.parse(cachedCartItems);
+          if (Array.isArray(items) && items.length > 0) {
+            setCartItems(items);
+            setHasInitialCache(true);
+            setLoading(false); // Stop loading immediately with cached data
+            
+            // Load discount if available
+            if (cachedDiscount) {
+              try {
+                const discount = JSON.parse(cachedDiscount);
+                setSelectedDiscount(discount);
+              } catch (error) {
+                console.error("Error parsing discount:", error);
+              }
+            }
+            
+            return; // Early return if we have cached data
+          }
+        }
+      }
+      // If no valid cache, keep loading state true to wait for API fetch
+      setHasInitialCache(false);
+    } catch (error) {
+      console.error("Error loading cached cart:", error);
+      setHasInitialCache(false);
+    }
+  }, []);
+
+  // Fetch cart items from API (sync in background)
+  const fetchCartItems = useCallback(async (skipLoading = false) => {
     if (!user) {
-      setLoading(false);
-      router.push("/sign-in");
+      if (!skipLoading) {
+        setLoading(false);
+      }
       return;
     }
 
@@ -69,7 +128,10 @@ export default function Checkout() {
         const supabase = createUserClient();
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
-          router.push("/sign-in");
+          if (!skipLoading) {
+            setLoading(false);
+            router.push("/sign-in");
+          }
           return;
         }
         token = session.access_token;
@@ -85,29 +147,65 @@ export default function Checkout() {
 
       if (response.ok) {
         const result = await response.json();
-        setCartItems(result.data || []);
+        const apiCartItems = result.data || [];
+        
+        // Always update with API data for consistency
+        setCartItems(apiCartItems);
+        
+        // Update localStorage with fresh data
+        try {
+          if (apiCartItems.length > 0) {
+            localStorage.setItem('checkout_cart_items', JSON.stringify(apiCartItems));
+            localStorage.setItem('checkout_timestamp', Date.now().toString());
+          } else {
+            // Clear cache if cart is empty
+            localStorage.removeItem('checkout_cart_items');
+            localStorage.removeItem('checkout_timestamp');
+          }
+        } catch (error) {
+          console.error('Error updating localStorage:', error);
+        }
         
         // Pre-fill email if available
-        if (user.email && !shippingInfo.email) {
-          setShippingInfo(prev => ({ ...prev, email: user.email || "" }));
+        if (user.email) {
+          setShippingInfo(prev => {
+            if (!prev.email) {
+              return { ...prev, email: user.email || "" };
+            }
+            return prev;
+          });
         }
       } else if (response.status === 401) {
-        router.push("/sign-in");
+        if (!skipLoading) {
+          setLoading(false);
+          router.push("/sign-in");
+        }
       }
     } catch (error) {
       console.error("Error fetching cart:", error);
+      // Don't clear cart items on error, keep cached version
     } finally {
-      setLoading(false);
+      if (!skipLoading) {
+        setLoading(false);
+      }
     }
-  }, [user, sessionToken, router, shippingInfo.email]);
+  }, [user, sessionToken, router]);
 
   useEffect(() => {
-    if (!authLoading && user) {
-      fetchCartItems();
-    } else if (!authLoading && !user) {
-      router.push("/sign-in");
+    if (!authLoading) {
+      if (user) {
+        // Fetch from API in background to sync with server
+        // Skip loading state update if we already have cached items
+        fetchCartItems(hasInitialCache);
+      } else {
+        // Only redirect if we don't have cached cart items
+        if (!hasInitialCache) {
+          setLoading(false);
+          router.push("/sign-in");
+        }
+      }
     }
-  }, [user, authLoading, fetchCartItems]);
+  }, [user, authLoading, fetchCartItems, hasInitialCache, router]);
 
   const subtotal = cartItems.reduce(
     (sum, item) => sum + item.price * item.quantity,
@@ -115,35 +213,145 @@ export default function Checkout() {
   );
   const shipping = subtotal > 0 ? 10 : 0;
   const tax = subtotal * 0.1; // 10% tax
-  const total = subtotal + shipping + tax;
+  
+  // Calculate discount
+  const calculateDiscountAmount = () => {
+    if (!selectedDiscount) return 0;
+    
+    // Check minimum purchase requirement
+    if (selectedDiscount.minPurchase && subtotal < selectedDiscount.minPurchase) {
+      return 0;
+    }
+    
+    let discountAmount = 0;
+    if (selectedDiscount.type === "percentage") {
+      discountAmount = (subtotal * selectedDiscount.value) / 100;
+      if (selectedDiscount.maxDiscount && discountAmount > selectedDiscount.maxDiscount) {
+        discountAmount = selectedDiscount.maxDiscount;
+      }
+    } else {
+      discountAmount = selectedDiscount.value;
+    }
+    
+    return discountAmount;
+  };
+  
+  const discountAmount = calculateDiscountAmount();
+  const total = subtotal + shipping + tax - discountAmount;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     
     // Validate form
     if (!shippingInfo.fullName || !shippingInfo.email || !shippingInfo.phone || 
         !shippingInfo.address || !shippingInfo.city || !shippingInfo.postalCode || 
         !shippingInfo.country) {
-      alert("Please fill in all shipping information");
+      setError("Please fill in all shipping information");
       return;
     }
 
     if (paymentMethod === "credit-card") {
       if (!cardInfo.cardNumber || !cardInfo.cardName || !cardInfo.expiryDate || !cardInfo.cvv) {
-        alert("Please fill in all payment information");
+        setError("Please fill in all payment information");
         return;
       }
     }
 
-    // Here you would process the payment
-    // For now, just show success message
-    alert("Order placed successfully! (This is a demo - payment processing not implemented)");
-    
-    // Redirect to order confirmation page
-    // router.push("/order-confirmation");
+    if (cartItems.length === 0) {
+      setError("Your cart is empty");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // Get session token
+      let token = sessionToken;
+      if (!token) {
+        const supabase = createUserClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          router.push("/sign-in");
+          return;
+        }
+        token = session.access_token;
+        setSessionToken(token);
+      }
+
+      // Calculate totals
+      const subtotal = cartItems.reduce(
+        (sum, item) => sum + item.price * item.quantity,
+        0
+      );
+      const shippingCost = subtotal > 0 ? 10 : 0;
+      const taxAmount = subtotal * 0.1;
+      
+      // Calculate discount
+      let discountAmount = 0;
+      if (selectedDiscount) {
+        if (!selectedDiscount.minPurchase || subtotal >= selectedDiscount.minPurchase) {
+          if (selectedDiscount.type === "percentage") {
+            discountAmount = (subtotal * selectedDiscount.value) / 100;
+            if (selectedDiscount.maxDiscount && discountAmount > selectedDiscount.maxDiscount) {
+              discountAmount = selectedDiscount.maxDiscount;
+            }
+          } else {
+            discountAmount = selectedDiscount.value;
+          }
+        }
+      }
+      
+      const totalAmount = subtotal + shippingCost + taxAmount - discountAmount;
+
+      // Create order
+      const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          shippingInfo,
+          paymentMethod,
+          cartItems,
+          subtotal,
+          shipping: shippingCost,
+          tax: taxAmount,
+          discount: discountAmount,
+          discountCode: selectedDiscount?.code || null,
+          discountId: selectedDiscount?.id || null,
+          total: totalAmount,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error?.message || 'Failed to create order');
+      }
+
+      // Clear localStorage after successful order
+      try {
+        localStorage.removeItem('checkout_cart_items');
+        localStorage.removeItem('checkout_timestamp');
+        localStorage.removeItem('checkout_discount');
+      } catch (error) {
+        console.error('Error clearing localStorage:', error);
+      }
+
+      // Redirect to order confirmation page with order details
+      router.push(`/order-confirmation?orderNumber=${result.data.orderNumber}&orderId=${result.data.orderId}`);
+    } catch (err: any) {
+      console.error("Error placing order:", err);
+      setError(err.message || "Failed to place order. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  if (loading || authLoading) {
+  // Show loading only if we don't have cached cart items
+  if ((loading || authLoading) && cartItems.length === 0) {
     return (
       <main className="min-h-screen bg-white">
         <div className="flex items-center justify-center min-h-screen">
@@ -459,6 +667,14 @@ export default function Checkout() {
                       <span>Tax</span>
                       <span>${formatPrice(tax)}</span>
                     </div>
+                    {selectedDiscount && discountAmount > 0 && (
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-gray-600">Discount ({selectedDiscount.code})</span>
+                        <span className="text-green-600 font-medium">
+                          -${formatPrice(discountAmount)}
+                        </span>
+                      </div>
+                    )}
                     <div className="border-t border-gray-200 pt-3">
                       <div className="flex justify-between text-base font-bold text-gray-900">
                         <span>Total</span>
@@ -467,11 +683,17 @@ export default function Checkout() {
                     </div>
                   </div>
 
+                  {error && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <p className="text-sm text-red-600">{error}</p>
+                    </div>
+                  )}
                   <button
                     type="submit"
-                    className="w-full bg-black text-white py-3 px-6 rounded-lg font-medium hover:bg-gray-800 transition-colors"
+                    disabled={isSubmitting}
+                    className="w-full bg-black text-white py-3 px-6 rounded-lg font-medium hover:bg-gray-800 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
                   >
-                    Place Order
+                    {isSubmitting ? "Placing Order..." : "Place Order"}
                   </button>
                 </div>
               </div>

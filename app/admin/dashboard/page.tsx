@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
@@ -42,6 +42,13 @@ type CountrySale = {
   flag: string;
 };
 
+type PopularBrand = {
+  id: string;
+  name: string;
+  sales: number;
+  color: string;
+};
+
 export default function AdminDashboard() {
   const { user, profile, loading } = useAuth();
   const router = useRouter();
@@ -55,32 +62,81 @@ export default function AdminDashboard() {
     completeOrderChange: 25,
     cancelOrderChange: -3,
   });
-  const [loadingStats, setLoadingStats] = useState(false); // Start as false, fetch stats in background
-  const [timeRange, setTimeRange] = useState("Last Week");
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [timeRange, setTimeRange] = useState("7d");
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [countries, setCountries] = useState<CountrySale[]>([]);
+  const [popularBrands, setPopularBrands] = useState<PopularBrand[]>([]);
+  const [salesData, setSalesData] = useState<{ date: string; current: number; previous: number }[]>([]);
 
-  // Sample data for transactions
-  const [transactions] = useState<Transaction[]>([
-    { id: "#CDHT478", productName: "Polo T-Shirt", category: "Man", price: 120.20, date: "27 Jun, 2024" },
-    { id: "#DKH4398", productName: "Jeans- Full Top", category: "Women", price: 90.95, date: "25 Jun, 2024" },
-    { id: "#FEDJT478", productName: "Air-Jordan 4 Shoes", category: "Kids", price: 125.89, date: "24 Jun, 2024" },
-    { id: "#CDHT478", productName: "Nike Shoes", category: "Women", price: 125.89, date: "24 Jun, 2024" },
-  ]);
+  // Fetch dashboard data
+  const fetchDashboardData = useCallback(async (isPolling: boolean = false) => {
+    if (!isPolling) {
+      setLoadingStats(true);
+    }
 
-  // Sample data for recent orders
-  const [recentOrders] = useState<RecentOrder[]>([
-    { id: "1", productName: "Air Jordan 4 Shoes", price: 102.90, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=100&q=80" },
-    { id: "2", productName: "Jeans Shirt & Pent Easy", price: 257.00, image: "https://images.unsplash.com/photo-1542272604-787c3835535d?w=100&q=80" },
-    { id: "3", productName: "Denim Jeans Pent Jack & Jones", price: 57.00, image: "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=100&q=80" },
-    { id: "4", productName: "Man's Polo T-Shirt", price: 57.00, image: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=100&q=80" },
-  ]);
+    try {
+      const response = await fetch(`/api/admin/dashboard?timeRange=${timeRange}&t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
 
-  // Sample data for countries
-  const [countries] = useState<CountrySale[]>([
-    { country: "United State", percentage: 34, flag: "🇺🇸" },
-    { country: "France", percentage: 25, flag: "🇫🇷" },
-    { country: "Australia", percentage: 15, flag: "🇦🇺" },
-    { country: "Germany", percentage: 12, flag: "🇩🇪" },
-  ]);
+      if (!response.ok) {
+        throw new Error('Failed to fetch dashboard data');
+      }
+
+      const result = await response.json();
+
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+
+      // Update stats
+      if (result.stats) {
+        setStats(result.stats);
+      }
+
+      // Update transactions
+      if (result.transactions) {
+        setTransactions(result.transactions);
+      }
+
+      // Update recent orders
+      if (result.recentOrders) {
+        setRecentOrders(result.recentOrders);
+      }
+
+      // Update countries
+      if (result.countries) {
+        setCountries(result.countries);
+      }
+
+      // Update popular brands with neon colors
+      if (result.popularBrands) {
+        const neonColors = ['#ff00ff', '#00ffff', '#39ff14', '#ff1493'];
+        const brandsWithColors = result.popularBrands.map((brand: PopularBrand, idx: number) => ({
+          ...brand,
+          color: brand.color || neonColors[idx] || neonColors[0]
+        }));
+        setPopularBrands(brandsWithColors);
+      }
+
+      // Update sales data
+      if (result.salesData) {
+        setSalesData(result.salesData);
+      }
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+      if (!isPolling) {
+        // Keep default values on error
+      }
+    } finally {
+      if (!isPolling) {
+        setLoadingStats(false);
+      }
+    }
+  }, [timeRange]);
 
   useEffect(() => {
     if (!loading) {
@@ -93,64 +149,24 @@ export default function AdminDashboard() {
         window.location.href = "/?error=unauthorized";
         return;
       } else if (user && profile && profile.role === 'admin') {
-        // Admin is logged in, fetch stats (don't wait for this to render)
-        fetchStats();
+        // Admin is logged in, fetch dashboard data
+        fetchDashboardData(false);
       }
-      // If user exists but profile not loaded yet, wait (don't redirect)
-      // But still allow rendering with default stats
     }
-  }, [user, profile, loading]);
+  }, [user, profile, loading, fetchDashboardData]);
 
-  const fetchStats = async () => {
-    setLoadingStats(true); // Set loading when starting to fetch
-    try {
-      // Fetch all stats in parallel for faster loading
-      const [productsRes, usersRes, ordersRes] = await Promise.all([
-        fetch('/api/products?limit=1'),
-        fetch('/api/admin/users/count'),
-        fetch('/api/admin/orders/count'),
-      ]);
+  // Polling for real-time updates (every 5 seconds)
+  useEffect(() => {
+    if (!loading && user && profile?.role === 'admin' && !loadingStats) {
+      const interval = setInterval(() => {
+        fetchDashboardData(true);
+      }, 5000); // Poll every 5 seconds
 
-      const [productsData, usersData, ordersData] = await Promise.all([
-        productsRes.json(),
-        usersRes.json(),
-        ordersRes.json(),
-      ]);
-
-      setStats({
-        totalTransaction: ordersData.revenue || 345539,
-        totalProduct: productsData.total || 420,
-        completeOrder: ordersData.completeCount || 345,
-        cancelOrder: ordersData.cancelCount || 34,
-        transactionChange: 34,
-        productChange: 8,
-        completeOrderChange: 25,
-        cancelOrderChange: -3,
-      });
-    } catch (err) {
-      console.error("Error fetching stats:", err);
-    } finally {
-      setLoadingStats(false);
+      return () => clearInterval(interval);
     }
-  };
+  }, [user, profile, loading, loadingStats, fetchDashboardData]);
 
-  // Sales chart data
-  const salesData = [
-    { date: "1 Aug", current: 50, previous: 30 },
-    { date: "2 Aug", current: 75, previous: 45 },
-    { date: "3 Aug", current: 60, previous: 50 },
-    { date: "4 Aug", current: 90, previous: 55 },
-    { date: "5 Aug", current: 85, previous: 60 },
-    { date: "6 Aug", current: 100, previous: 65 },
-    { date: "7 Aug", current: 95, previous: 70 },
-    { date: "8 Aug", current: 110, previous: 75 },
-    { date: "9 Aug", current: 105, previous: 80 },
-    { date: "10 Aug", current: 120, previous: 85 },
-    { date: "11 Aug", current: 115, previous: 90 },
-    { date: "12 Aug", current: 130, previous: 95 },
-    { date: "13 Aug", current: 125, previous: 100 },
-    { date: "14 Aug", current: 140, previous: 105 },
-  ];
+  // Sales chart data is now fetched from API
 
   // Chart configuration for shadcn chart
   const chartConfig = {
@@ -164,28 +180,6 @@ export default function AdminDashboard() {
     },
   };
 
-  // Mini chart data for metric cards (sparkline data)
-  const generateSparklineData = (trend: 'up' | 'down') => {
-    const baseData = Array.from({ length: 7 }, (_, i) => i);
-    if (trend === 'up') {
-      return baseData.map((_, i) => ({ value: 20 + i * 5 + Math.random() * 3 }));
-    } else {
-      return baseData.map((_, i) => ({ value: 50 - i * 3 - Math.random() * 2 }));
-    }
-  };
-
-  const transactionSparkline = generateSparklineData(stats.transactionChange > 0 ? 'up' : 'down');
-  const productSparkline = generateSparklineData(stats.productChange > 0 ? 'up' : 'down');
-  const completeOrderSparkline = generateSparklineData(stats.completeOrderChange > 0 ? 'up' : 'down');
-  const cancelOrderSparkline = generateSparklineData(stats.cancelOrderChange > 0 ? 'up' : 'down');
-
-  // Mini chart config for sparklines
-  const sparklineConfig = {
-    value: {
-      label: "Value",
-      color: "hsl(173, 80%, 40%)",
-    },
-  };
 
   // Only show loading if auth is still loading, not for stats
   if (loading) {
@@ -231,269 +225,140 @@ export default function AdminDashboard() {
         <div className="max-w-7xl mx-auto">
           {/* Dashboard Overview */}
           <div className="mb-6">
-            <h1 className="text-2xl font-bold text-gray-900 mb-6">Dashboard Overview</h1>
+            <h1 className="text-2xl font-normal text-gray-900 mb-6 flex items-center gap-3">
+              <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              Dashboard Overview
+            </h1>
             
             {/* Metric Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              {/* Total Transaction */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">Total Transaction</CardTitle>
-                  <div className={`p-2 rounded-full ${stats.transactionChange > 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-                    {stats.transactionChange > 0 ? (
-                      <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                      </svg>
-                    ) : (
-                      <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17l5-5m0 0l-5-5m5 5H6" />
-                      </svg>
-                    )}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-gray-200">
+                {/* Total Transaction */}
+                <div className="p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                    </svg>
+                    <h3 className="text-sm font-normal text-gray-600">Total Transaction</h3>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-gray-900">${stats.totalTransaction.toLocaleString()}</div>
-                  <div className="flex items-center gap-2 text-sm mt-4">
+                  <div className="text-3xl font-normal text-gray-900 mb-2">${stats.totalTransaction.toLocaleString()}</div>
+                  <div className="flex items-center gap-1 text-sm">
                     <span className={`font-medium ${stats.transactionChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {stats.transactionChange > 0 ? '+' : ''}{stats.transactionChange}%
+                      {stats.transactionChange > 0 ? (
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                          </svg>
+                          {stats.transactionChange}%
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                          </svg>
+                          {stats.transactionChange}%
+                        </span>
+                      )}
                     </span>
-                    <span className="text-gray-500">vs last 7 days</span>
+                    <span className="text-gray-500">vs last month</span>
                   </div>
-                  <div className="mt-4 h-12">
-                    <ChartContainer
-                      config={{
-                        value: {
-                          label: "Transaction",
-                          color: stats.transactionChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)",
-                        },
-                      }}
-                      className="h-full w-full"
-                    >
-                      <AreaChart
-                        data={transactionSparkline}
-                        margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                      >
-                        <defs>
-                          <linearGradient id="transactionGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop
-                              offset="5%"
-                              stopColor={stats.transactionChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                              stopOpacity={0.3}
-                            />
-                            <stop
-                              offset="95%"
-                              stopColor={stats.transactionChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                        </defs>
-                        <Area
-                          type="monotone"
-                          dataKey="value"
-                          stroke={stats.transactionChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                          strokeWidth={2}
-                          fill="url(#transactionGradient)"
-                        />
-                      </AreaChart>
-                    </ChartContainer>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
 
-              {/* Total Product */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">Total Product</CardTitle>
-                  <div className={`p-2 rounded-full ${stats.productChange > 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-                    {stats.productChange > 0 ? (
-                      <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                      </svg>
-                    ) : (
-                      <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17l5-5m0 0l-5-5m5 5H6" />
-                      </svg>
-                    )}
+                {/* Total Product */}
+                <div className="p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
+                    <h3 className="text-sm font-normal text-gray-600">Total Product</h3>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-gray-900">{stats.totalProduct}</div>
-                  <div className="flex items-center gap-2 text-sm mt-4">
+                  <div className="text-3xl font-normal text-gray-900 mb-2">{stats.totalProduct}</div>
+                  <div className="flex items-center gap-1 text-sm">
                     <span className={`font-medium ${stats.productChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {stats.productChange > 0 ? '+' : ''}{stats.productChange}%
+                      {stats.productChange > 0 ? (
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                          </svg>
+                          {stats.productChange}%
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                          </svg>
+                          {stats.productChange}%
+                        </span>
+                      )}
                     </span>
-                    <span className="text-gray-500">vs last 7 days</span>
+                    <span className="text-gray-500">vs last month</span>
                   </div>
-                  <div className="mt-4 h-12">
-                    <ChartContainer
-                      config={{
-                        value: {
-                          label: "Product",
-                          color: stats.productChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)",
-                        },
-                      }}
-                      className="h-full w-full"
-                    >
-                      <AreaChart
-                        data={productSparkline}
-                        margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                      >
-                        <defs>
-                          <linearGradient id="productGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop
-                              offset="5%"
-                              stopColor={stats.productChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                              stopOpacity={0.3}
-                            />
-                            <stop
-                              offset="95%"
-                              stopColor={stats.productChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                        </defs>
-                        <Area
-                          type="monotone"
-                          dataKey="value"
-                          stroke={stats.productChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                          strokeWidth={2}
-                          fill="url(#productGradient)"
-                        />
-                      </AreaChart>
-                    </ChartContainer>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
 
-              {/* Complete Order */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">Complete Order</CardTitle>
-                  <div className={`p-2 rounded-full ${stats.completeOrderChange > 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-                    {stats.completeOrderChange > 0 ? (
-                      <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                      </svg>
-                    ) : (
-                      <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17l5-5m0 0l-5-5m5 5H6" />
-                      </svg>
-                    )}
+                {/* Complete Order */}
+                <div className="p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <h3 className="text-sm font-normal text-gray-600">Complete Order</h3>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-gray-900">{stats.completeOrder}</div>
-                  <div className="flex items-center gap-2 text-sm mt-4">
+                  <div className="text-3xl font-normal text-gray-900 mb-2">{stats.completeOrder}</div>
+                  <div className="flex items-center gap-1 text-sm">
                     <span className={`font-medium ${stats.completeOrderChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {stats.completeOrderChange > 0 ? '+' : ''}{stats.completeOrderChange}%
+                      {stats.completeOrderChange > 0 ? (
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                          </svg>
+                          {stats.completeOrderChange}%
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                          </svg>
+                          {stats.completeOrderChange}%
+                        </span>
+                      )}
                     </span>
-                    <span className="text-gray-500">vs last 7 days</span>
+                    <span className="text-gray-500">vs last month</span>
                   </div>
-                  <div className="mt-4 h-12">
-                    <ChartContainer
-                      config={{
-                        value: {
-                          label: "Complete Order",
-                          color: stats.completeOrderChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)",
-                        },
-                      }}
-                      className="h-full w-full"
-                    >
-                      <AreaChart
-                        data={completeOrderSparkline}
-                        margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                      >
-                        <defs>
-                          <linearGradient id="completeOrderGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop
-                              offset="5%"
-                              stopColor={stats.completeOrderChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                              stopOpacity={0.3}
-                            />
-                            <stop
-                              offset="95%"
-                              stopColor={stats.completeOrderChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                        </defs>
-                        <Area
-                          type="monotone"
-                          dataKey="value"
-                          stroke={stats.completeOrderChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                          strokeWidth={2}
-                          fill="url(#completeOrderGradient)"
-                        />
-                      </AreaChart>
-                    </ChartContainer>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
 
-              {/* Cancel Order */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">Cancel Order</CardTitle>
-                  <div className={`p-2 rounded-full ${stats.cancelOrderChange > 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-                    {stats.cancelOrderChange > 0 ? (
-                      <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                      </svg>
-                    ) : (
-                      <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17l5-5m0 0l-5-5m5 5H6" />
-                      </svg>
-                    )}
+                {/* Cancel Order */}
+                <div className="p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <h3 className="text-sm font-normal text-gray-600">Cancel Order</h3>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-gray-900">{stats.cancelOrder}</div>
-                  <div className="flex items-center gap-2 text-sm mt-4">
+                  <div className="text-3xl font-normal text-gray-900 mb-2">{stats.cancelOrder}</div>
+                  <div className="flex items-center gap-1 text-sm">
                     <span className={`font-medium ${stats.cancelOrderChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {stats.cancelOrderChange > 0 ? '+' : ''}{stats.cancelOrderChange}%
+                      {stats.cancelOrderChange > 0 ? (
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                          </svg>
+                          {stats.cancelOrderChange}%
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                          </svg>
+                          {stats.cancelOrderChange}%
+                        </span>
+                      )}
                     </span>
-                    <span className="text-gray-500">vs last 7 days</span>
+                    <span className="text-gray-500">vs last month</span>
                   </div>
-                  <div className="mt-4 h-12">
-                    <ChartContainer
-                      config={{
-                        value: {
-                          label: "Cancel Order",
-                          color: stats.cancelOrderChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)",
-                        },
-                      }}
-                      className="h-full w-full"
-                    >
-                      <AreaChart
-                        data={cancelOrderSparkline}
-                        margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                      >
-                        <defs>
-                          <linearGradient id="cancelOrderGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop
-                              offset="5%"
-                              stopColor={stats.cancelOrderChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                              stopOpacity={0.3}
-                            />
-                            <stop
-                              offset="95%"
-                              stopColor={stats.cancelOrderChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                        </defs>
-                        <Area
-                          type="monotone"
-                          dataKey="value"
-                          stroke={stats.cancelOrderChange > 0 ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
-                          strokeWidth={2}
-                          fill="url(#cancelOrderGradient)"
-                        />
-                      </AreaChart>
-                    </ChartContainer>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -502,116 +367,272 @@ export default function AdminDashboard() {
             {/* Sales Report */}
             <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
               <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900 mb-1">This month sales report</h2>
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold text-gray-900">${stats.totalTransaction.toLocaleString()}</span>
-                    <span className="text-sm text-green-600 font-medium flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                      </svg>
-                      {stats.transactionChange}%
-                    </span>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-normal text-gray-900 flex items-center gap-2">
+                    This month sales report
+                  </h2>
+                  <div className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors">
+                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
                   </div>
                 </div>
-                <select className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option>Monthly</option>
-                  <option>Weekly</option>
-                  <option>Daily</option>
-                </select>
+                <div className="flex items-center gap-2">
+                  <Link href="/admin/analytics" className="text-sm text-gray-600 hover:text-gray-900 font-medium flex items-center gap-1">
+                    View More
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Link>
+                  <button className="p-1.5 text-gray-400 hover:text-gray-600 transition-colors">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                    </svg>
+                  </button>
+                </div>
               </div>
+              
+              {/* Key Metrics */}
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-3xl font-normal text-gray-900">${stats.totalTransaction.toLocaleString()}</span>
+                  <span className={`text-sm font-normal flex items-center gap-1 ${stats.transactionChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {stats.transactionChange > 0 ? (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                        </svg>
+                        {stats.transactionChange}%
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                        </svg>
+                        {Math.abs(stats.transactionChange)}%
+                      </>
+                    )}
+                  </span>
+                </div>
+                <span className="text-sm text-gray-500">vs last month</span>
+              </div>
+
+              {/* Legend */}
+              <div className="flex items-center gap-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-gray-800"></div>
+                  <span className="text-xs text-gray-600">This month</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-gray-300"></div>
+                  <span className="text-xs text-gray-600">Last month</span>
+                </div>
+              </div>
+
+              {/* Chart */}
               <div className="h-64">
-                <ChartContainer config={chartConfig} className="h-full w-full">
-                  <AreaChart
-                    data={salesData}
-                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                  >
+                {loadingStats && salesData.length === 0 ? (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+                  </div>
+                ) : (
+                  <ChartContainer config={chartConfig} className="h-full w-full">
+                    <LineChart
+                      data={salesData.length > 0 ? salesData : []}
+                      margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
+                    >
                     <defs>
                       <linearGradient id="colorCurrent" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(173, 80%, 40%)" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="hsl(173, 80%, 40%)" stopOpacity={0} />
+                        <stop offset="5%" stopColor="rgb(31, 41, 55)" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="rgb(31, 41, 55)" stopOpacity={0} />
                       </linearGradient>
                       <linearGradient id="colorPrevious" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(25, 95%, 53%)" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="hsl(25, 95%, 53%)" stopOpacity={0} />
+                        <stop offset="5%" stopColor="rgb(209, 213, 219)" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="rgb(209, 213, 219)" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                     <XAxis
                       dataKey="date"
-                      tick={{ fill: "#6b7280", fontSize: 12 }}
+                      tick={{ fill: "#6b7280", fontSize: 11 }}
                       axisLine={{ stroke: "#e5e7eb" }}
                       tickLine={{ stroke: "#e5e7eb" }}
+                      interval="preserveStartEnd"
                     />
                     <YAxis
-                      tick={{ fill: "#6b7280", fontSize: 12 }}
+                      tick={{ fill: "#6b7280", fontSize: 11 }}
                       axisLine={{ stroke: "#e5e7eb" }}
                       tickLine={{ stroke: "#e5e7eb" }}
+                      tickFormatter={(value) => {
+                        if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
+                        return `$${value}`;
+                      }}
                     />
                     <ChartTooltip content={<ChartTooltipContent />} />
-                    <Area
+                    <Line
                       type="monotone"
                       dataKey="current"
-                      stroke="hsl(173, 80%, 40%)"
-                      strokeWidth={3}
-                      fill="url(#colorCurrent)"
+                      stroke="rgb(31, 41, 55)"
+                      strokeWidth={2.5}
+                      dot={false}
+                      activeDot={{ r: 4 }}
                     />
-                    <Area
+                    <Line
                       type="monotone"
                       dataKey="previous"
-                      stroke="hsl(25, 95%, 53%)"
+                      stroke="rgb(209, 213, 219)"
                       strokeWidth={2}
-                      strokeDasharray="5 5"
-                      fill="url(#colorPrevious)"
+                      dot={false}
+                      activeDot={{ r: 4 }}
                     />
-                  </AreaChart>
-                </ChartContainer>
+                    </LineChart>
+                  </ChartContainer>
+                )}
               </div>
             </div>
 
-            {/* Top Countries */}
+            {/* Popular Brand */}
             <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Top Countries by Sell</h2>
-                  <p className="text-sm text-gray-500">of the week based on country</p>
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                  </svg>
+                  <h2 className="text-lg font-normal text-gray-900">Popular Brand</h2>
+                  <div className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors">
+                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
                 </div>
-                <select className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option>Country</option>
-                  <option>Region</option>
-                </select>
+                <div className="flex items-center gap-2">
+                  <Link href="/admin/products" className="text-sm text-gray-600 hover:text-gray-900 font-medium flex items-center gap-1">
+                    View More
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Link>
+                  <button className="p-1.5 text-gray-400 hover:text-gray-600 transition-colors">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                    </svg>
+                  </button>
+                  <button className="p-1.5 text-gray-400 hover:text-gray-600 transition-colors">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                    </svg>
+                  </button>
+                </div>
               </div>
               
-              {/* Simple World Map Visualization */}
-              <div className="mb-6 h-48 bg-gray-50 rounded-lg flex items-center justify-center relative overflow-hidden">
-                <div className="text-6xl">🌍</div>
-                {/* Dots representing sales locations */}
-                <div className="absolute top-1/4 left-1/4 w-3 h-3 bg-blue-500 rounded-full"></div>
-                <div className="absolute top-1/3 right-1/3 w-3 h-3 bg-blue-500 rounded-full"></div>
-                <div className="absolute bottom-1/4 left-1/3 w-3 h-3 bg-blue-500 rounded-full"></div>
-                <div className="absolute top-1/2 right-1/4 w-3 h-3 bg-blue-500 rounded-full"></div>
-                <div className="absolute bottom-1/3 left-1/2 w-3 h-3 bg-blue-500 rounded-full"></div>
+              {/* X-axis Labels (at top) */}
+              <div className="mb-6 flex items-center justify-between text-xs font-medium text-gray-500 px-1">
+                <span>0</span>
+                <span>2K</span>
+                <span>4K</span>
+                <span>6K</span>
+                <span>8K</span>
               </div>
-
-              {/* Country List */}
-              <div className="space-y-4">
-                {countries.map((country, idx) => (
-                  <div key={idx} className="flex items-center gap-3">
-                    <span className="text-2xl">{country.flag}</span>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium text-gray-900">{country.country}</span>
-                        <span className="text-sm font-medium text-gray-900">{country.percentage}%</span>
+              
+              {/* Horizontal Bar Chart */}
+              <div className="space-y-6">
+                {(() => {
+                  // Function to get brand color based on name
+                  const getBrandColor = (brandName: string, idx: number) => {
+                    const name = brandName.toLowerCase();
+                    if (name.includes('jordan')) return '#ff6600'; // Orange
+                    if (name.includes('chrome') || name.includes('hearts')) return '#000000'; // Hitam
+                    if (name.includes('stussy')) return '#808080'; // Abu-abu
+                    // Default neon colors for other brands
+                    const neonColors = ['#ff00ff', '#00ffff', '#39ff14', '#ff1493'];
+                    return neonColors[idx] || '#ff00ff';
+                  };
+                  
+                  const brandsToDisplay = popularBrands.length > 0 
+                    ? popularBrands.map((b, idx) => ({ ...b, color: b.color || getBrandColor(b.name, idx) }))
+                    : [
+                        { id: '1', name: 'Jordan', sales: 8172, color: '#ff6600' }, // Orange
+                        { id: '2', name: 'Chrome Hearts', sales: 6345, color: '#000000' }, // Hitam
+                        { id: '3', name: 'Stussy', sales: 3287, color: '#808080' }, // Abu-abu
+                        { id: '4', name: 'Red Bull', sales: 2456, color: '#ff1493' }, // Neon Deep Pink
+                      ];
+                  
+                  const maxSales = Math.max(...brandsToDisplay.map(b => b.sales));
+                  const totalSales = brandsToDisplay.reduce((sum, b) => sum + b.sales, 0);
+                  
+                  return brandsToDisplay.map((brand, idx) => {
+                    const percentage = maxSales > 0 ? (brand.sales / maxSales) * 100 : 0;
+                    const salesPercentage = totalSales > 0 ? (brand.sales / totalSales) * 100 : 0;
+                    const brandColor = brand.color || neonColors[idx] || neonColors[0];
+                    
+                    // Convert hex to rgb for gradient transparency
+                    const hexToRgb = (hex: string) => {
+                      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                      return result ? {
+                        r: parseInt(result[1], 16),
+                        g: parseInt(result[2], 16),
+                        b: parseInt(result[3], 16)
+                      } : { r: 255, g: 0, b: 255 };
+                    };
+                    const rgb = hexToRgb(brandColor);
+                    const gradientColor = `linear-gradient(to right, 
+                      rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1), 
+                      rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9), 
+                      rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.7), 
+                      rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.5)
+                    )`;
+                  
+                  return (
+                    <div key={brand.id || idx} className="space-y-3">
+                      {/* Brand Name and Sales */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-normal text-gray-900">{brand.name}</span>
+                        <span className="text-sm font-normal text-gray-900">{salesPercentage.toFixed(1)}%</span>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div
-                          className="bg-blue-500 h-2 rounded-full transition-all"
-                          style={{ width: `${country.percentage}%` }}
-                        ></div>
+                      
+                      {/* Bar Chart Container */}
+                      <div className="relative w-full h-5">
+                        {/* Pattern Bar (lighter gray dashed bar underneath) */}
+                        <div className="absolute inset-0 h-5 rounded-full overflow-hidden" style={{ zIndex: 1 }}>
+                          <div
+                            className="bg-gray-100 h-full rounded-full"
+                            style={{ 
+                              width: `${percentage}%`,
+                              backgroundImage: `repeating-linear-gradient(
+                                45deg,
+                                transparent,
+                                transparent 3px,
+                                rgba(156, 163, 175, 0.2) 3px,
+                                rgba(156, 163, 175, 0.2) 6px
+                              )`
+                            }}
+                          ></div>
+                        </div>
+                        
+                        {/* Main Bar (on top with solid neon color, pattern, and gradient) */}
+                        <div className="absolute inset-0 h-5 rounded-full overflow-hidden" style={{ zIndex: 2 }}>
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{ 
+                              width: `${percentage}%`,
+                              background: `
+                                repeating-linear-gradient(
+                                  45deg,
+                                  transparent,
+                                  transparent 3px,
+                                  rgba(255, 255, 255, 0.15) 3px,
+                                  rgba(255, 255, 255, 0.15) 6px
+                                ),
+                                ${gradientColor}
+                              `
+                            }}
+                          ></div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                  });
+                })()}
               </div>
             </div>
           </div>
@@ -621,7 +642,12 @@ export default function AdminDashboard() {
             {/* Last Transaction */}
             <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Last Transaction</h2>
+                <h2 className="text-lg font-normal text-gray-900 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Last Transaction
+                </h2>
                 <button className="p-2 text-gray-600 hover:text-gray-900">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
@@ -635,26 +661,34 @@ export default function AdminDashboard() {
                       <th className="text-left py-3 px-2">
                         <input type="checkbox" className="rounded" />
                       </th>
-                      <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 uppercase">Order ID</th>
-                      <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 uppercase">Product Name</th>
-                      <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 uppercase">Category</th>
-                      <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 uppercase">Price</th>
-                      <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 uppercase">Date</th>
+                      <th className="text-left py-3 px-2 text-xs font-normal text-gray-600 uppercase">Order ID</th>
+                      <th className="text-left py-3 px-2 text-xs font-normal text-gray-600 uppercase">Product Name</th>
+                      <th className="text-left py-3 px-2 text-xs font-normal text-gray-600 uppercase">Category</th>
+                      <th className="text-left py-3 px-2 text-xs font-normal text-gray-600 uppercase">Price</th>
+                      <th className="text-left py-3 px-2 text-xs font-normal text-gray-600 uppercase">Date</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {transactions.map((transaction, idx) => (
-                      <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-3 px-2">
-                          <input type="checkbox" className="rounded" />
+                    {transactions.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="text-center py-8 text-gray-500">
+                          No transactions found
                         </td>
-                        <td className="py-3 px-2 text-sm text-gray-900">{transaction.id}</td>
-                        <td className="py-3 px-2 text-sm text-gray-700">{transaction.productName}</td>
-                        <td className="py-3 px-2 text-sm text-gray-700">{transaction.category}</td>
-                        <td className="py-3 px-2 text-sm font-medium text-gray-900">${transaction.price.toFixed(2)}</td>
-                        <td className="py-3 px-2 text-sm text-gray-600">{transaction.date}</td>
                       </tr>
-                    ))}
+                    ) : (
+                      transactions.map((transaction, idx) => (
+                        <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-3 px-2">
+                            <input type="checkbox" className="rounded" />
+                          </td>
+                          <td className="py-3 px-2 text-sm text-gray-900">{transaction.id}</td>
+                          <td className="py-3 px-2 text-sm text-gray-700">{transaction.productName}</td>
+                          <td className="py-3 px-2 text-sm text-gray-700">{transaction.category}</td>
+                          <td className="py-3 px-2 text-sm font-medium text-gray-900">${transaction.price.toFixed(2)}</td>
+                          <td className="py-3 px-2 text-sm text-gray-600">{transaction.date}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -663,29 +697,38 @@ export default function AdminDashboard() {
             {/* Recent Order */}
             <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Recent Order</h2>
+                <h2 className="text-lg font-normal text-gray-900 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                  </svg>
+                  Recent Order
+                </h2>
                 <Link href="/admin/orders" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
                   See All
                 </Link>
               </div>
               <div className="space-y-4">
-                {recentOrders.map((order) => (
-                  <div key={order.id} className="flex items-center gap-4 p-3 hover:bg-gray-50 rounded-lg transition-colors">
-                    <div className="relative w-16 h-16 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0">
-                      <Image
-                        src={order.image}
-                        alt={order.productName}
-                        fill
-                        className="object-cover"
-                        unoptimized
-                      />
+                {recentOrders.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">No recent orders found</div>
+                ) : (
+                  recentOrders.map((order) => (
+                    <div key={order.id} className="flex items-center gap-4 p-3 hover:bg-gray-50 rounded-lg transition-colors">
+                      <div className="relative w-16 h-16 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0">
+                        <Image
+                          src={order.image}
+                          alt={order.productName}
+                          fill
+                          className="object-cover"
+                          unoptimized
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-medium text-gray-900 truncate">{order.productName}</h3>
+                        <p className="text-sm font-normal text-gray-900 mt-1">${order.price.toFixed(2)}</p>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-medium text-gray-900 truncate">{order.productName}</h3>
-                      <p className="text-sm font-semibold text-gray-900 mt-1">${order.price.toFixed(2)}</p>
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </div>

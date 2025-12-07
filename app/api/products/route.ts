@@ -1,19 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 
+// Disable caching for real-time updates
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET(request: NextRequest) {
   try {
     const supabase = createServerClient();
     const searchParams = request.nextUrl.searchParams;
 
     // Get query parameters
-    const category = searchParams.get('category');
-    const brand = searchParams.get('brand');
+    const categories = searchParams.getAll('category'); // Get all category parameters
+    const category = categories.length > 0 ? categories[0] : null; // Use first one for main category
+    const brands = searchParams.getAll('brand'); // Get all brand parameters
+    const gender = searchParams.get('gender');
     const isNewArrival = searchParams.get('is_new_arrival');
     const isOnSale = searchParams.get('is_on_sale');
     const minPrice = searchParams.get('min_price');
     const maxPrice = searchParams.get('max_price');
-    const color = searchParams.get('color');
+    const colors = searchParams.getAll('color'); // Get all color parameters
     const storeId = searchParams.get('store_id');
     const search = searchParams.get('search');
     const page = parseInt(searchParams.get('page') || '1');
@@ -26,11 +32,27 @@ export async function GET(request: NextRequest) {
       .select('*', { count: 'exact' });
 
     // Apply filters
-    if (category) {
-      query = query.eq('category', category);
+    // If multiple categories, use 'in' filter, otherwise use 'eq'
+    // Note: If isNewArrival is true, we don't filter by category to avoid conflicts
+    if (categories.length > 0 && isNewArrival !== 'true') {
+      if (categories.length === 1) {
+        query = query.eq('category', categories[0]);
+      } else {
+        query = query.in('category', categories);
+      }
     }
-    if (brand) {
-      query = query.eq('brand', brand);
+    // If multiple brands, use 'in' filter, otherwise use 'eq'
+    if (brands.length > 0) {
+      if (brands.length === 1) {
+        query = query.eq('brand', brands[0]);
+      } else {
+        query = query.in('brand', brands);
+      }
+    }
+    // Gender filter - only show products with matching gender
+    // Products without gender (null) will not be shown when gender filter is active
+    if (gender) {
+      query = query.eq('gender', gender);
     }
     if (isNewArrival === 'true') {
       query = query.eq('is_new_arrival', true);
@@ -44,8 +66,13 @@ export async function GET(request: NextRequest) {
     if (maxPrice) {
       query = query.lte('sale_price', parseFloat(maxPrice));
     }
-    if (color) {
-      query = query.eq('color', color);
+    // If multiple colors, use 'in' filter, otherwise use 'eq'
+    if (colors.length > 0) {
+      if (colors.length === 1) {
+        query = query.eq('color', colors[0]);
+      } else {
+        query = query.in('color', colors);
+      }
     }
     if (storeId) {
       query = query.eq('store_id', storeId);
@@ -79,6 +106,7 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query;
 
     if (error) {
+      console.error('Supabase query error:', error);
       throw error;
     }
 
@@ -90,11 +118,19 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     console.error('Error fetching products:', error);
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
     return NextResponse.json(
       {
         error: {
           message: error.message || 'Failed to fetch products',
-          code: 'FETCH_ERROR',
+          code: error.code || 'FETCH_ERROR',
+          details: error.details || null,
+          hint: error.hint || null,
         },
       },
       { status: 500 }
@@ -115,6 +151,7 @@ export async function POST(request: NextRequest) {
       sale_price,
       discount_percentage,
       category,
+      gender,
       designer,
       color,
       size,
@@ -204,6 +241,7 @@ export async function POST(request: NextRequest) {
         insertData.is_new_arrival = true;
       }
     }
+    if (gender !== undefined) insertData.gender = gender;
     if (designer !== undefined) insertData.designer = designer;
     if (color !== undefined) insertData.color = color;
     if (size !== undefined) insertData.size = size;

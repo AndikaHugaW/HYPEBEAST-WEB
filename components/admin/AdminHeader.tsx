@@ -253,9 +253,10 @@ export default function AdminHeader({ timeRange, setTimeRange }: AdminHeaderProp
             onChange={(e) => setTimeRange(e.target.value)}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
           >
-            <option>Last Week</option>
-            <option>Last Month</option>
-            <option>Last Year</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+            <option value="90d">Last 90 Days</option>
+            <option value="1y">Last Year</option>
           </select>
         </div>
       </div>

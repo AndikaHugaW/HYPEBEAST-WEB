@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 
+// Disable caching for real-time updates
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -105,6 +109,7 @@ export async function PUT(
       sale_price,
       discount_percentage,
       category,
+      gender,
       designer,
       color,
       size,
@@ -142,6 +147,7 @@ export async function PUT(
     if (sale_price !== undefined) updateData.sale_price = sale_price;
     if (discount_percentage !== undefined) updateData.discount_percentage = discount_percentage;
     if (category !== undefined) updateData.category = category;
+    if (gender !== undefined) updateData.gender = gender;
     if (designer !== undefined) updateData.designer = designer;
     if (color !== undefined) updateData.color = color;
     if (size !== undefined) updateData.size = size;

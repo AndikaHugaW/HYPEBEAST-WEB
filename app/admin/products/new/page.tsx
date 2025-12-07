@@ -19,6 +19,8 @@ export default function NewProduct() {
   const [brand, setBrand] = useState("");
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState("");
+  const [gender, setGender] = useState("");
+  const [description, setDescription] = useState("");
   const [imageUrls, setImageUrls] = useState<string[]>(Array(4).fill(""));
 
   // Available categories
@@ -105,6 +107,10 @@ export default function NewProduct() {
       alert("Valid price is required");
       return;
     }
+    if (parseFloat(price) > 100000) {
+      alert("Price cannot exceed $100,000");
+      return;
+    }
     if (!category) {
       alert("Category is required");
       return;
@@ -135,6 +141,8 @@ export default function NewProduct() {
           sale_price: parseFloat(price),
           images: cleanImageUrls,
           category: category,
+          gender: gender || null,
+          description: description.trim() || null,
         }),
       });
 
@@ -259,6 +267,7 @@ export default function NewProduct() {
                 type="number"
                 step="0.01"
                 min="0"
+                max="100000"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-transparent bg-white text-gray-900"
@@ -284,6 +293,36 @@ export default function NewProduct() {
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Gender */}
+          <div>
+            <label className="block text-sm font-normal text-gray-900 mb-2">
+              Gender
+            </label>
+            <select
+              value={gender}
+              onChange={(e) => setGender(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-transparent bg-white text-gray-900"
+            >
+              <option value="">Select gender (optional)</option>
+              <option value="men">Men</option>
+              <option value="woman">Woman</option>
+            </select>
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="block text-sm font-normal text-gray-900 mb-2">
+              Description
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={6}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-transparent bg-white text-gray-900 resize-y"
+              placeholder="Enter product description..."
+            />
           </div>
 
           {/* Image Upload */}
